@@ -6,67 +6,10 @@ const timer_mod = @import("timer.zig");
 const cache = @import("cache.zig");
 
 const Timer = timer_mod.Timer;
-const SYS = std.os.linux.SYS;
 
-/// Read a sysfs file via raw Linux syscalls.
-fn readSysFile(path: []const u8, buffer: []u8) usize {
-    if (builtin.os.tag != .linux) return 0;
-    // Build a null-terminated copy
-    var zpath: [128]u8 = undefined;
-    const n = @min(path.len, zpath.len - 1);
-    @memcpy(zpath[0..n], path[0..n]);
-    zpath[n] = 0;
-
-    const fd = std.os.linux.syscall3(SYS.open, @intFromPtr(&zpath), @as(usize, 0), @as(usize, 0));
-    if (fd >> 63 != 0) return 0; // check negative (error)
-
-    const bytes_read = std.os.linux.syscall3(SYS.read, fd, @intFromPtr(buffer.ptr), buffer.len);
-    _ = std.os.linux.syscall1(SYS.close, fd);
-
-    if (bytes_read >> 63 != 0) return 0;
-    return @as(usize, @intCast(bytes_read));
-}
-
-fn parseCpuRange(content: []const u8) u32 {
-    const trimmed = std.mem.trim(u8, content, " \n\r\t");
-    if (trimmed.len == 0) return 0;
-    if (std.mem.indexOfScalar(u8, trimmed, '-')) |dash| {
-        const end = std.fmt.parseInt(u32, std.mem.trim(u8, trimmed[dash + 1 ..], " \n\r"), 10) catch return 1;
-        return end + 1;
-    }
-    var count: u32 = 0;
-    var it = std.mem.splitScalar(u8, trimmed, ',');
-    while (it.next()) |part| {
-        const p = std.mem.trim(u8, part, " \n\r");
-        if (p.len == 0) continue;
-        _ = std.fmt.parseInt(u32, p, 10) catch {
-            if (std.mem.indexOfScalar(u8, p, '-')) |dash| {
-                const e = std.fmt.parseInt(u32, std.mem.trim(u8, p[dash + 1 ..], " \n\r"), 10) catch continue;
-                const s = std.fmt.parseInt(u32, p[0..dash], 10) catch continue;
-                count += e - s + 1;
-            }
-            continue;
-        };
-        count += 1;
-    }
-    return count;
-}
-
-fn countPhysicalCores() u32 {
-    var buf: [128]u8 = undefined;
-    var seen: u64 = 0;
-    for (0..64) |cpu| {
-        var pb: [64]u8 = undefined;
-        const path = std.fmt.bufPrint(pb[0..], "/sys/devices/system/cpu/cpu{d}/topology/core_id", .{cpu}) catch break;
-        const n = readSysFile(path, &buf);
-        if (n == 0) break;
-        const trimmed = std.mem.trim(u8, buf[0..n], " \n\r\t");
-        if (trimmed.len == 0) break;
-        const id = std.fmt.parseInt(u32, trimmed, 10) catch continue;
-        if (id < 64) seen |= @as(u64, 1) << @intCast(id);
-    }
-    return @intCast(@popCount(seen));
-}
+// ═══════════════════════════════════════════════════════════════
+//  JSON output
+// ═══════════════════════════════════════════════════════════════
 
 fn writeJson(io: std.Io, info: platform.PlatformInfo, timer: *const Timer, results: []const cache.CacheResult, warnings: []const []const u8) void {
     const out_file = std.Io.File.stdout();
@@ -116,24 +59,18 @@ fn writeJson(io: std.Io, info: platform.PlatformInfo, timer: *const Timer, resul
     w.flush() catch {};
 }
 
-fn bindToCore0() bool {
-    if (builtin.os.tag != .linux) return false;
-    var mask: usize = 1;
-    const rc = std.os.linux.syscall3(SYS.sched_setaffinity, @as(usize, 0), @as(usize, @sizeOf(usize)), @intFromPtr(&mask));
-    if (rc >> 63 != 0) return false;
-    var result_mask: usize = 0;
-    _ = std.os.linux.syscall3(SYS.sched_getaffinity, 0, @sizeOf(usize), @intFromPtr(&result_mask));
-    return result_mask == 1;
-}
+// ═══════════════════════════════════════════════════════════════
+//  Entry point
+// ═══════════════════════════════════════════════════════════════
 
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
 
-    std.debug.print("=== Tau-Profiler Engine v0.1.0 ===\n", .{});
+    std.debug.print("=== Tau-Profiler Engine v0.2.0 ===\n", .{});
     std.debug.print("[1/4] Detecting platform...\n", .{});
 
-    // Build PlatformInfo with stable string references
+    // ── Platform info ──
     var brand_buf: [48]u8 = undefined;
     const brand = platform.getCpuBrand(&brand_buf);
     const hv = platform.getVirtualization();
@@ -149,12 +86,8 @@ pub fn main(init: std.process.Init) !void {
         .is_virtualized = hv.is_vm,
         .virtualized_under = hv.hv,
     };
-    if (builtin.os.tag == .linux) {
-        var buf: [256]u8 = undefined;
-        const n = readSysFile("/sys/devices/system/cpu/online", &buf);
-        if (n > 0) info.logical_cores = parseCpuRange(buf[0..n]);
-        info.physical_cores = countPhysicalCores();
-    }
+    info.physical_cores = platform.getPhysicalCores();
+    info.logical_cores = platform.getLogicalCores();
 
     std.debug.print("  OS: {s}, Arch: {s}\n", .{ info.os, info.arch });
     std.debug.print("  CPU: {s}\n", .{info.cpu_brand});
@@ -165,27 +98,36 @@ pub fn main(init: std.process.Init) !void {
         try warnings.append(allocator, "Running inside a VM -- results may have extra jitter");
     }
 
+    // ── Timer calibration ──
     std.debug.print("[2/4] Calibrating timer...\n", .{});
     var timer = Timer.init(io);
     if (timer.calibrated) {
-        std.debug.print("  TSC freq: {d:.2} MHz\n", .{timer.tsc_hz / 1_000_000.0});
+        switch (timer.timer_source) {
+            .rdtscp => std.debug.print("  Source: RDTSCP\n", .{}),
+            .cntvct => std.debug.print("  Source: CNTVCT_EL0 (ARM generic timer)\n", .{}),
+            .fallback => std.debug.print("  Source: OS monotonic clock\n", .{}),
+        }
+        std.debug.print("  Freq:   {d:.2} MHz\n", .{timer.tsc_hz / 1_000_000.0});
     } else {
-        std.debug.print("  WARNING: TSC calibration failed\n", .{});
-        try warnings.append(allocator, "TSC failed -- using OS clock");
+        std.debug.print("  WARNING: Timer calibration failed\n", .{});
+        try warnings.append(allocator, "Timer calibration failed -- using OS clock");
     }
 
     const overhead = Timer.measureOverhead();
     std.debug.print("  Timer overhead: {d:.0} ticks\n", .{overhead});
 
-    std.debug.print("[3/4] Binding to core 0...\n", .{});
-    const bound = bindToCore0();
+    // ── Core pinning ──
+    std.debug.print("[3/4] Pinning to core 0...\n", .{});
+    const bound = platform.bindToCore(0);
     if (!bound) {
-        std.debug.print("  WARNING: Could not bind\n", .{});
+        // On platforms without affinity support this is non-fatal
+        std.debug.print("  WARNING: Could not pin to core 0\n", .{});
         try warnings.append(allocator, "Not bound to a single core");
     } else {
         std.debug.print("  OK\n", .{});
     }
 
+    // ── Sweep ──
     std.debug.print("[4/4] Running latency sweep (4KB -> 64MB)...\n", .{});
     const results = cache.runSweep(allocator, &timer) catch |err| {
         std.debug.print("  ERROR: {}\n", .{err});
