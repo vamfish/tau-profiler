@@ -245,9 +245,10 @@ def render_ctxswitch(data: dict):
     print("=" * 60)
     for r in results:
         if r['latency_ns'] > 0:
-            print(f"  {r['label']:<30}  {fmt_ns(r['latency_ns'])}  (conf: {r['confidence']:.0%})")
+            print(f"  {r['label']:<35}  {fmt_ns(r['latency_ns'])}  (cycles: {r['latency_cycles']:.1f})")
+            print(f"  {'(method: ' + r['method'] + ')':<35}  conf: {r['confidence']:.0%}")
         else:
-            print(f"  {r['label']:<30}  (待实现)")
+            print(f"  {r['label']:<35}  (待实现)")
 
 
 def render_warnings(data: dict):

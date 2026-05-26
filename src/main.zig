@@ -194,29 +194,28 @@ pub fn main(init: std.process.Init) !void {
 
     // TLB
     std.debug.print("  TLB probe...\n", .{});
-    const tlb_results = tlb.runTlbSweep(allocator, &timer) catch |err| {
+    const tlb_results = tlb.runTlbSweep(allocator, &timer) catch |err| blk: {
         std.debug.print("  [WARN] TLB sweep failed: {}\n", .{err});
         try warnings.append(allocator, "TLB sweep failed");
-        // Return an empty slice
-        try allocator.alloc(tlb.TlbResult, 0);
+        break :blk try allocator.alloc(tlb.TlbResult, 0);
     };
     std.debug.print("    {d} TLB points\n", .{tlb_results.len});
 
     // Page fault
     std.debug.print("  Page fault probe...\n", .{});
-    const pf_results = pagefault.runPageFaultSweep(allocator, &timer) catch |err| {
+    const pf_results = pagefault.runPageFaultSweep(allocator, &timer) catch |err| blk: {
         std.debug.print("  [WARN] Page fault sweep failed: {}\n", .{err});
         try warnings.append(allocator, "Page fault sweep failed");
-        try allocator.alloc(pagefault.PageFaultResult, 0);
+        break :blk try allocator.alloc(pagefault.PageFaultResult, 0);
     };
     std.debug.print("    {d} page fault points\n", .{pf_results.len});
 
     // Context switch
     std.debug.print("  Context switch probe...\n", .{});
-    const ctx_results = ctxswitch.runCtxSwitch(allocator, &timer) catch |err| {
+    const ctx_results = ctxswitch.runCtxSwitch(allocator, &timer) catch |err| blk: {
         std.debug.print("  [WARN] Context switch probe failed: {}\n", .{err});
         try warnings.append(allocator, "Context switch probe failed");
-        try allocator.alloc(ctxswitch.CtxSwitchResult, 0);
+        break :blk try allocator.alloc(ctxswitch.CtxSwitchResult, 0);
     };
     std.debug.print("    {d} ctx switch points\n", .{ctx_results.len});
 
