@@ -1,13 +1,15 @@
 #!/usr/bin/env python3
 """
-Tau-Profiler Client — Phase 1 Prototype
+Tau-Profiler Client — Phase 2
 Calls the Zig engine, parses JSON output, displays results.
+Supports cache, TLB, page fault, and context switch benchmarks.
 """
 
 import subprocess
 import json
 import sys
 import os
+import math
 
 
 def find_engine() -> str:
@@ -26,10 +28,7 @@ def find_engine() -> str:
 
 
 def run_engine(engine_path: str) -> dict:
-    """
-    Run the Zig engine, capture JSON output from stdout,
-    while stderr is shown in real-time.
-    """
+    """Run the Zig engine, capture JSON output from stdout."""
     print("🚀 Launching Tau-Profiler engine...")
     print()
 
@@ -40,18 +39,10 @@ def run_engine(engine_path: str) -> dict:
         text=True,
     )
 
-    # Read stderr line-by-line and display
-    stderr_lines = []
-    stdout_lines = []
-
-    # We need to read both streams. Use a selective approach.
-    # Read all stderr first (it's small enough)
     stderr_text = process.stderr.read()
     stdout_text = process.stdout.read()
-
     process.wait()
 
-    # Print stderr (debug output)
     for line in stderr_text.split("\n"):
         if line.strip():
             print(f"  {line}")
@@ -60,7 +51,6 @@ def run_engine(engine_path: str) -> dict:
         print(f"\n❌ Engine exited with code {process.returncode}")
         sys.exit(1)
 
-    # Parse JSON from stdout
     try:
         data = json.loads(stdout_text)
         return data
@@ -70,12 +60,31 @@ def run_engine(engine_path: str) -> dict:
         sys.exit(1)
 
 
-def render_results(data: dict):
-    """Display results in a formatted terminal output."""
+def fmt_ns(ns: float) -> str:
+    """Format nanoseconds nicely."""
+    if ns < 0.001:
+        return f"{ns * 1000:.2f} ps"
+    if ns < 1:
+        return f"{ns * 1000:.1f} ps"
+    if ns < 1000:
+        return f"{ns:.2f} ns"
+    return f"{ns / 1000:.3f} µs"
+
+
+def fmt_size(b: int) -> str:
+    """Format bytes nicely."""
+    if b >= 1024 * 1024 * 1024:
+        return f"{b / (1024*1024*1024):.1f}GB"
+    if b >= 1024 * 1024:
+        return f"{b // (1024*1024)}MB"
+    if b >= 1024:
+        return f"{b // 1024}KB"
+    return f"{b}B"
+
+
+def render_platform(data: dict):
     plat = data.get("platform", {})
     cal = data.get("calibration", {})
-    results = data.get("results", [])
-    warnings = data.get("warnings", [])
 
     print()
     print("=" * 60)
@@ -86,7 +95,7 @@ def render_results(data: dict):
     print(f"  CPU:       {plat.get('cpu_brand', '?')}")
     print(f"  Vendor:    {plat.get('cpu_vendor', '?')}")
     print(f"  Cores:     {plat.get('physical_cores', '?')}P / {plat.get('logical_cores', '?')}L")
-    print(f"  Page:      {plat.get('page_size', '?')} bytes")
+    print(f"  Page:      {fmt_size(plat.get('page_size', 4096))}")
     print(f"  VM:        {plat.get('is_virtualized', '?')} ({plat.get('virtualized_under', '?')})")
 
     print()
@@ -94,61 +103,155 @@ def render_results(data: dict):
     print("  ⏱️  计时器校准")
     print("=" * 60)
     if cal.get("calibrated"):
-        print(f"  TSC 频率:   {cal['tsc_hz'] / 1_000_000:.2f} MHz")
-        cpu_ps = (1.0 / cal["tsc_hz"]) * 1e12
-        print(f"  τ_cycle:    {cpu_ps:.2f} ps  (CPU 核心节拍)")
+        hz = cal["tsc_hz"]
+        print(f"  频率:        {hz / 1_000_000:.2f} MHz")
+        cpu_ps = (1.0 / hz) * 1e12
+        print(f"  τ_cycle:     {cpu_ps:.2f} ps")
     else:
-        print("  ⚠️  TSC 校准失败，使用系统时钟")
+        print("  ⚠️  校准失败")
 
+
+def render_table(title: str, headers: list, rows: list, col_widths: list | None = None):
+    """Render a simple aligned table."""
     print()
     print("=" * 60)
-    print("  📊 内存层级延迟测试结果")
+    print(f"  {title}")
     print("=" * 60)
-    print(f"  {'层级':<18} {'大小':>8} {'延迟(ns)':>10} {'周期':>8} {'置信度':>6}")
-    print(f"  {'-'*18} {'-'*8} {'-'*10} {'-'*8} {'-'*6}")
+
+    if not rows:
+        print("  (no data)")
+        return
+
+    widths = col_widths or [max(len(str(h)), max(len(str(r[i])) for r in rows)) for i, h in enumerate(headers)]
+    # Ensure minimum
+    widths = [max(w, 6) for w in widths]
+
+    header_line = "  " + " ".join(h.ljust(w) for h, w in zip(headers, widths))
+    sep_line = "  " + " ".join("-" * w for w in widths)
+    print(header_line)
+    print(sep_line)
+
+    for row in rows:
+        parts = []
+        for val, w in zip(row, widths):
+            s = str(val)
+            if isinstance(val, float):
+                s = f"{val:.2f}"
+            parts.append(s.ljust(w))
+        print("  " + " ".join(parts))
+
+
+def render_cache(data: dict):
+    results = data.get("cache", [])
+    if not results:
+        return
+
+    rows = []
     for r in results:
         size = r.get("size_bytes", 0)
-        if size >= 1024 * 1024:
-            size_str = f"{size // (1024*1024)}MB"
-        elif size >= 1024:
-            size_str = f"{size // 1024}KB"
-        else:
-            size_str = f"{size}B"
-        print(f"  {r['label']:<18} {size_str:>8} {r['latency_ns']:>10.2f} {r['latency_cycles']:>8.1f} {r['confidence']:>5.0%}")
+        rows.append([
+            r["label"],
+            fmt_size(size),
+            f"{r['latency_ns']:.2f}",
+            f"{r['latency_cycles']:.1f}",
+        ])
 
-    # Find key transition points
+    render_table("📊 内存层级延迟 (Cache)", ["层级", "大小", "延迟(ns)", "周期"], rows)
+
+    # Tau constants
+    tau_l1 = avg_lat([r for r in results if r.get("size_bytes", 0) <= 32 * 1024])
+    tau_l2 = avg_lat([r for r in results if 64 * 1024 <= r.get("size_bytes", 0) <= 256 * 1024])
+    tau_l3 = avg_lat([r for r in results if 512 * 1024 <= r.get("size_bytes", 0) <= 4 * 1024 * 1024])
+    tau_dram = avg_lat([r for r in results if r.get("size_bytes", 0) >= 32 * 1024 * 1024])
+
+    print()
+    print("─" * 60)
+    print("  📈 关键时间常数 (Tau)")
+    print("─" * 60)
+    for name, val in [("τ_L1 (L1)", tau_l1), ("τ_L2 (L2)", tau_l2),
+                     ("τ_L3 (LLC)", tau_l3), ("τ_DRAM", tau_dram)]:
+        if val:
+            print(f"  {name:<15}  {fmt_ns(val)}")
+        else:
+            print(f"  {name:<15}  —")
+
+
+def avg_lat(items):
+    if not items:
+        return 0
+    return sum(r["latency_ns"] for r in items) / len(items)
+
+
+def render_tlb(data: dict):
+    results = data.get("tlb", [])
+    if not results:
+        return
+
+    rows = []
+    for r in results:
+        rows.append([
+            r["label"],
+            f"{r['pages']}",
+            fmt_ns(r['latency_ns']),
+            f"{r['latency_cycles']:.1f}",
+            f"{r['confidence']:.0%}",
+        ])
+
+    render_table("📖 TLB 层级探测", ["层级", "页数", "延迟", "周期", "置信度"], rows)
+
+
+def render_pagefault(data: dict):
+    results = data.get("pagefault", [])
+    if not results:
+        return
+
+    # Split into minor fault and TLB shootdown
+    minor = [r for r in results if "Minor" in r["label"]]
+    shootdown = [r for r in results if "Shootdown" in r["label"] or "Ping-Pong" in r["label"]]
+
+    if minor:
+        rows = []
+        for r in minor:
+            rows.append([
+                fmt_size(r['total_bytes']),
+                f"{r['pages']}",
+                fmt_ns(r['first_touch_ns']),
+                fmt_ns(r['second_touch_ns']),
+                fmt_ns(r['fault_overhead_ns']),
+            ])
+        render_table("📄 缺页中断 (Minor Page Fault)", ["大小", "页数", "首次访问", "二次访问", "缺页开销"], rows)
+
+    if shootdown:
+        rows = []
+        for r in shootdown:
+            rows.append([
+                fmt_size(r['total_bytes']),
+                f"{r['pages']}",
+                fmt_ns(r['first_touch_ns']),
+                fmt_ns(r['second_touch_ns']),
+                fmt_ns(r['fault_overhead_ns']),
+            ])
+        render_table("🔄 TLB 抖动开销", ["大小", "页数", "乒乓访问", "顺序访问", "开销"], rows)
+
+
+def render_ctxswitch(data: dict):
+    results = data.get("ctxswitch", [])
+    if not results:
+        return
+
     print()
     print("=" * 60)
-    print("  📈 关键时间常数 (Tau)")
+    print("  🔄 上下文切换延迟")
     print("=" * 60)
+    for r in results:
+        if r['latency_ns'] > 0:
+            print(f"  {r['label']:<30}  {fmt_ns(r['latency_ns'])}  (conf: {r['confidence']:.0%})")
+        else:
+            print(f"  {r['label']:<30}  (待实现)")
 
-    # Find DRAM latency (largest size that's > 32MB)
-    dram = [r for r in results if r.get("size_bytes", 0) >= 32 * 1024 * 1024]
-    l3 = [r for r in results if 512 * 1024 <= r.get("size_bytes", 0) <= 4 * 1024 * 1024]
-    l2 = [r for r in results if 64 * 1024 <= r.get("size_bytes", 0) <= 256 * 1024]
-    l1 = [r for r in results if r.get("size_bytes", 0) <= 32 * 1024]
 
-    def avg_lat(items):
-        if not items:
-            return 0
-        return sum(r["latency_ns"] for r in items) / len(items)
-
-    tau_cpu_cycle = cpu_ps if cal.get("calibrated") else 0
-    tau_l1 = avg_lat(l1) if l1 else 0
-    tau_l2 = avg_lat(l2) if l2 else 0
-    tau_l3 = avg_lat(l3) if l3 else 0
-    tau_dram = avg_lat(dram) if dram else 0
-
-    print(f"  τ_cycle    (CPU 周期):    {tau_cpu_cycle:>8.2f} ps")
-    print(f"  τ_L1       (L1 缓存):     {tau_l1:>8.2f} ns  ({tau_l1 * 1000:>8.0f} ps)")
-    print(f"  τ_L2       (L2 缓存):     {tau_l2:>8.2f} ns")
-    print(f"  τ_L3       (L3/LLC):      {tau_l3:>8.2f} ns")
-    print(f"  τ_DRAM     (主存):        {tau_dram:>8.2f} ns")
-
-    if tau_cpu_cycle > 0 and tau_dram > 0:
-        ratio = (tau_dram * 1000) / tau_cpu_cycle
-        print(f"\n  🔬 从 CPU 周期到 DRAM 延迟跨度: ~{ratio:.0f}x")
-
+def render_warnings(data: dict):
+    warnings = data.get("warnings", [])
     if warnings:
         print()
         print("=" * 60)
@@ -157,16 +260,20 @@ def render_results(data: dict):
         for w in warnings:
             print(f"  • {w}")
 
-    print()
-    print("=" * 60)
-    print("  ✅ 测试完成")
-    print("=" * 60)
-
 
 def main():
     engine = find_engine()
     data = run_engine(engine)
-    render_results(data)
+    render_platform(data)
+    render_cache(data)
+    render_tlb(data)
+    render_pagefault(data)
+    render_ctxswitch(data)
+    render_warnings(data)
+    print()
+    print("=" * 60)
+    print("  ✅ 测试完成")
+    print("=" * 60)
 
 
 if __name__ == "__main__":
