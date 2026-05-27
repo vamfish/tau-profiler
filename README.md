@@ -24,12 +24,14 @@ Supports **Linux / macOS / Windows**, **x86_64 / AArch64**.
 
 ## Quick Start
 
+### 🚀 Pre-built binary (recommended)
+The repo includes a pre-compiled static binary — no Zig installation needed:
+
 ```bash
 git clone https://github.com/vamfish/tau-profiler.git
 cd tau-profiler
-zig build -Doptimize=ReleaseFast
 
-# CLI mode
+# CLI mode (no dependencies)
 ./zig-out/bin/tau_profiler
 
 # GUI mode (requires Python + PyQt6)
@@ -37,7 +39,17 @@ pip install -r requirements.txt
 python tau_gui.py
 ```
 
-Requires **Zig >= 0.17.0-dev**. Python 3 with PyQt6 for the GUI client.
+### 🔧 Build from source
+If you want to modify the engine, you'll need **Zig ≥ 0.17.0-dev**:
+
+```bash
+zig build -Doptimize=ReleaseFast
+```
+
+> ⚠️ **Why 0.17.0-dev?** The engine uses the new `std.Io` API introduced in Zig 0.17.
+> This version is **not** available via `winget` / `apt` / `brew` yet.
+> Install from [ziglang.org/download](https://ziglang.org/download/) → choose the latest **master** build.
+> Or use [zigup](https://github.com/marler8997/zigup) / [zvm](https://github.com/tristanisham/zvm) to manage Zig versions.
 
 ##  Screenshot
 
