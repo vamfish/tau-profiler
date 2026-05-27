@@ -35,6 +35,7 @@ from PyQt6.QtGui import (
 
 # ── pyqtgraph ───────────────────────────────────────────────────────
 import pyqtgraph as pg
+
 pg.setConfigOptions(antialias=True, foreground=(0, 220, 0))
 
 # ── Report ──────────────────────────────────────────────────────────
@@ -88,6 +89,10 @@ def find_engine() -> str:
     for c in candidates:
         if os.path.exists(c):
             return c
+        # Also try with .exe on Windows
+        win_path = c + ".exe"
+        if os.path.exists(win_path):
+            return win_path
     return ""
 
 
@@ -98,9 +103,7 @@ def run_engine(engine_path: str, progress_cb=None) -> dict:
         stderr=subprocess.PIPE,
         text=True,
     )
-    stderr_text = proc.stderr.read()
-    stdout_text = proc.stdout.read()
-    proc.wait()
+    stdout_text, stderr_text = proc.communicate()
 
     if progress_cb:
         for line in stderr_text.split("\n"):
@@ -945,7 +948,7 @@ class TauProfilerGUI(QMainWindow):
             x=list(range(len(results))),
             height=lats,
             width=0.6,
-            brushes=THEME["colors"][:len(results)],
+            brushes=[THEME["colors"][i % len(THEME["colors"])] for i in range(len(results))],
         )
         self.tlb_plot.addItem(bg)
 
@@ -955,7 +958,7 @@ class TauProfilerGUI(QMainWindow):
                           symbol="d", symbolSize=8, symbolBrush=THEME["cyan"],
                           name="Latency trend")
 
-        self.tlb_plot.getAxis("bottom").setTicks([list(enumerate(pages))])
+        self.tlb_plot.getAxis("bottom").setTicks([list(enumerate(str(p) for p in pages))])
         self.tlb_plot.setLabel("bottom", "Pages (count)")
 
         info = []
@@ -1056,7 +1059,7 @@ class TauProfilerGUI(QMainWindow):
             x=list(range(len(valid))),
             height=lats,
             width=0.6,
-            brushes=THEME["colors"][:len(valid)],
+            brushes=[THEME["colors"][i % len(THEME["colors"])] for i in range(len(valid))],
         )
         self.ctx_plot.addItem(bg)
 
@@ -1569,9 +1572,8 @@ class TauProfilerGUI(QMainWindow):
             # Default to cache plot
             plot_widget = self.cache_plot
 
-        # Export
-        exporter = pg.exporters.ImageExporter(plot_widget.plotItem)
-        exporter.export(path)
+        # Export to PNG using built-in writeImage
+        plot_widget.plotItem.writeImage(path)
         self.lbl_status.setText(f"✅ Chart saved: {path}")
 
     def _is_widget_visible(self, widget) -> bool:

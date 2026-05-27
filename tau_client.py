@@ -22,6 +22,10 @@ def find_engine() -> str:
     for c in candidates:
         if os.path.exists(c):
             return c
+        # Also try with .exe on Windows
+        win_path = c + ".exe"
+        if os.path.exists(win_path):
+            return win_path
     raise FileNotFoundError(
         "Tau engine binary not found. Build it first: zig build"
     )
@@ -39,9 +43,7 @@ def run_engine(engine_path: str) -> dict:
         text=True,
     )
 
-    stderr_text = process.stderr.read()
-    stdout_text = process.stdout.read()
-    process.wait()
+    stdout_text, stderr_text = process.communicate()
 
     for line in stderr_text.split("\n"):
         if line.strip():
