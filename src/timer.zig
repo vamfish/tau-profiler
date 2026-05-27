@@ -32,7 +32,7 @@ pub const Timer = struct {
         return switch (builtin.cpu.arch) {
             .x86_64 => readRdtscp(),
             .aarch64 => readCntvct(),
-            else => @intCast(std.time.nanoTimestamp()),
+            else => fallbackNow(),
         };
     }
 
@@ -117,14 +117,12 @@ pub const Timer = struct {
 
     /// Fallback calibration: use OS monotonic clock.
     fn calibrateFallback(io: std.Io) !f64 {
-        // For OS-clock-based timers, we return the OS clock rate (1 GHz in ns)
-        // and just use nanosecond timestamps directly.
-        const start = std.time.nanoTimestamp();
+        // Verify the monotonic clock works by sleeping 1s and checking delta.
+        const start = std.Io.Timestamp.now(io, .awake);
         std.Io.sleep(io, .{ .nanoseconds = 1_000_000_000 }, .awake) catch return error.CalibrationFailed;
-        const end = std.time.nanoTimestamp();
-        const delta = end - start;
-        if (delta == 0) return error.CalibrationFailed;
-        // Timestamps are in nanoseconds, so the "frequency" is 1e9
+        const end = std.Io.Timestamp.now(io, .awake);
+        if (end.nanoseconds <= start.nanoseconds) return error.CalibrationFailed;
+        // fallback now() returns nanoseconds, so the "frequency" is 1e9
         return 1_000_000_000.0;
     }
 };
@@ -145,19 +143,72 @@ fn readRdtscp() u64 {
 }
 
 fn readCntvct() u64 {
-    var val: u64 = undefined;
-    asm volatile ("mrs %[val], cntvct_el0"
-        : [val] "=r" (val)
-    );
-    return val;
+    if (builtin.cpu.arch == .aarch64) {
+        var val: u64 = undefined;
+        asm volatile ("mrs %[val], cntvct_el0"
+            : [val] "=r" (val)
+        );
+        return val;
+    }
+    return 0;
 }
 
 /// Read the ARM generic timer frequency register.
 /// Returns 0 if not readable (e.g., in some VM configurations).
 fn readCntfrq() u64 {
-    var val: u64 = undefined;
-    asm volatile ("mrs %[val], cntfrq_el0"
-        : [val] "=r" (val)
-    );
-    return val;
+    if (builtin.cpu.arch == .aarch64) {
+        var val: u64 = undefined;
+        asm volatile ("mrs %[val], cntfrq_el0"
+            : [val] "=r" (val)
+        );
+        return val;
+    }
+    return 0;
+}
+
+// ── Fallback: OS monotonic clock (nanoseconds) ──
+
+fn fallbackNow() u64 {
+    if (builtin.os.tag == .windows) {
+        return fallbackNowWindows();
+    }
+    if (builtin.os.tag == .linux or builtin.os.tag == .macos) {
+        return fallbackNowPosix();
+    }
+    @compileError("Unsupported platform for fallback timer");
+}
+
+fn fallbackNowWindows() u64 {
+    const winclock = struct {
+        var freq: i64 = 0;
+        extern "kernel32" fn QueryPerformanceCounter(c: *i64) callconv(.c) i32;
+        extern "kernel32" fn QueryPerformanceFrequency(f: *i64) callconv(.c) i32;
+    };
+
+    if (winclock.freq == 0) {
+        _ = winclock.QueryPerformanceFrequency(&winclock.freq);
+    }
+
+    var counter: i64 = undefined;
+    _ = winclock.QueryPerformanceCounter(&counter);
+
+    // Convert to nanoseconds: counter * 1_000_000_000 / freq
+    if (winclock.freq > 0) {
+        return @as(u64, @intCast(@divTrunc(counter * 1_000_000_000, winclock.freq)));
+    }
+    return 0;
+}
+
+extern fn mach_absolute_time() callconv(.c) u64;
+
+fn fallbackNowPosix() u64 {
+    if (builtin.os.tag == .linux) {
+        var ts: std.os.linux.timespec = undefined;
+        _ = std.os.linux.clock_gettime(std.os.linux.CLOCK.MONOTONIC, &ts);
+        return @as(u64, @intCast(ts.tv_sec)) * 1_000_000_000 + @as(u64, @intCast(ts.tv_nsec));
+    }
+    if (builtin.os.tag == .macos) {
+        return mach_absolute_time();
+    }
+    unreachable;
 }

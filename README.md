@@ -35,8 +35,11 @@ cd tau-profiler
 ./zig-out/bin/tau_profiler
 
 # GUI mode (requires Python + PyQt6)
-pip install -r requirements.txt
-python tau_gui.py
+uv sync
+uv run python tau_gui.py
+# If you do not use uv
+# pip install -r requirements.txt
+# python tau_gui.py
 ```
 
 ### 🔧 Build from source

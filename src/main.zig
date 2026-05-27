@@ -59,10 +59,17 @@ fn writeJson(
     w.print("  \"cache\": [\n", .{}) catch return;
     for (cache_results, 0..) |r, i| {
         const comma: []const u8 = if (i + 1 < cache_results.len) "," else "";
-        w.print(
-            \\    {"label":"{s}","size_bytes":{},"latency_ns":{d:.4},"latency_cycles":{d:.4},"confidence":{d:.2}}{s}
-            \\
-        , .{ r.label, r.size, r.latency_ns, r.latency_cycles, r.confidence, comma }) catch return;
+        w.writeAll("    {\"label\":\"") catch return;
+        w.print("{s}", .{r.label}) catch return;
+        w.writeAll("\",\"size_bytes\":") catch return;
+        w.print("{}", .{r.size}) catch return;
+        w.writeAll(",\"latency_ns\":") catch return;
+        w.print("{d:.4}", .{r.latency_ns}) catch return;
+        w.writeAll(",\"latency_cycles\":") catch return;
+        w.print("{d:.4}", .{r.latency_cycles}) catch return;
+        w.writeAll(",\"confidence\":") catch return;
+        w.print("{d:.2}", .{r.confidence}) catch return;
+        w.print("}}{s}\n", .{comma}) catch return;
     }
     w.print("  ],\n", .{}) catch return;
 
@@ -70,10 +77,17 @@ fn writeJson(
     w.print("  \"tlb\": [\n", .{}) catch return;
     for (tlb_results, 0..) |r, i| {
         const comma: []const u8 = if (i + 1 < tlb_results.len) "," else "";
-        w.print(
-            \\    {"label":"{s}","pages":{},"latency_ns":{d:.4},"latency_cycles":{d:.4},"confidence":{d:.2}}{s}
-            \\
-        , .{ r.label, r.pages, r.latency_ns, r.latency_cycles, r.confidence, comma }) catch return;
+        w.writeAll("    {\"label\":\"") catch return;
+        w.print("{s}", .{r.label}) catch return;
+        w.writeAll("\",\"pages\":") catch return;
+        w.print("{}", .{r.pages}) catch return;
+        w.writeAll(",\"latency_ns\":") catch return;
+        w.print("{d:.4}", .{r.latency_ns}) catch return;
+        w.writeAll(",\"latency_cycles\":") catch return;
+        w.print("{d:.4}", .{r.latency_cycles}) catch return;
+        w.writeAll(",\"confidence\":") catch return;
+        w.print("{d:.2}", .{r.confidence}) catch return;
+        w.print("}}{s}\n", .{comma}) catch return;
     }
     w.print("  ],\n", .{}) catch return;
 
@@ -81,10 +95,19 @@ fn writeJson(
     w.print("  \"pagefault\": [\n", .{}) catch return;
     for (pf_results, 0..) |r, i| {
         const comma: []const u8 = if (i + 1 < pf_results.len) "," else "";
-        w.print(
-            \\    {"label":"{s}","pages":{},"total_bytes":{},"first_touch_ns":{d:.4},"second_touch_ns":{d:.4},"fault_overhead_ns":{d:.4}}{s}
-            \\
-        , .{ r.label, r.pages, r.total_bytes, r.first_touch_ns, r.second_touch_ns, r.fault_overhead_ns, comma }) catch return;
+        w.writeAll("    {\"label\":\"") catch return;
+        w.print("{s}", .{r.label}) catch return;
+        w.writeAll("\",\"pages\":") catch return;
+        w.print("{}", .{r.pages}) catch return;
+        w.writeAll(",\"total_bytes\":") catch return;
+        w.print("{}", .{r.total_bytes}) catch return;
+        w.writeAll(",\"first_touch_ns\":") catch return;
+        w.print("{d:.4}", .{r.first_touch_ns}) catch return;
+        w.writeAll(",\"second_touch_ns\":") catch return;
+        w.print("{d:.4}", .{r.second_touch_ns}) catch return;
+        w.writeAll(",\"fault_overhead_ns\":") catch return;
+        w.print("{d:.4}", .{r.fault_overhead_ns}) catch return;
+        w.print("}}{s}\n", .{comma}) catch return;
     }
     w.print("  ],\n", .{}) catch return;
 
@@ -92,10 +115,17 @@ fn writeJson(
     w.print("  \"ctxswitch\": [\n", .{}) catch return;
     for (ctx_results, 0..) |r, i| {
         const comma: []const u8 = if (i + 1 < ctx_results.len) "," else "";
-        w.print(
-            \\    {"label":"{s}","method":"{s}","latency_ns":{d:.4},"latency_cycles":{d:.4},"confidence":{d:.2}}{s}
-            \\
-        , .{ r.label, r.method, r.latency_ns, r.latency_cycles, r.confidence, comma }) catch return;
+        w.writeAll("    {\"label\":\"") catch return;
+        w.print("{s}", .{r.label}) catch return;
+        w.writeAll("\",\"method\":\"") catch return;
+        w.print("{s}", .{r.method}) catch return;
+        w.writeAll("\",\"latency_ns\":") catch return;
+        w.print("{d:.4}", .{r.latency_ns}) catch return;
+        w.writeAll(",\"latency_cycles\":") catch return;
+        w.print("{d:.4}", .{r.latency_cycles}) catch return;
+        w.writeAll(",\"confidence\":") catch return;
+        w.print("{d:.2}", .{r.confidence}) catch return;
+        w.print("}}{s}\n", .{comma}) catch return;
     }
     w.print("  ]", .{}) catch return;
 

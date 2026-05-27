@@ -42,7 +42,7 @@ pub fn medianSorted(sorted: []const f64) f64 {
 /// Compute median without modifying the original data (copies internally).
 pub fn median(values: []const f64) f64 {
     if (values.len == 0) return 0;
-    var copy = std.heap.page_allocator.alloc(f64, values.len) catch return values[0];
+    const copy = std.heap.page_allocator.alloc(f64, values.len) catch return values[0];
     defer std.heap.page_allocator.free(copy);
     @memcpy(copy, values);
     sort(copy);
@@ -55,7 +55,7 @@ pub fn median(values: []const f64) f64 {
 pub fn filterMAD(allocator: std.mem.Allocator, values: []const f64, k: f64) !struct { filtered: []f64, outliers: usize } {
     if (values.len <= 2) return .{ .filtered = try allocator.dupe(f64, values), .outliers = 0 };
 
-    var copy = try allocator.alloc(f64, values.len);
+    const copy = try allocator.alloc(f64, values.len);
     defer allocator.free(copy);
     @memcpy(copy, values);
     sort(copy);

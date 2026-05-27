@@ -29,7 +29,7 @@ from PyQt6.QtCore import (
     Qt, QTimer, QThread, pyqtSignal, QSize, QUrl, QRectF,
 )
 from PyQt6.QtGui import (
-    QFont, QColor, QPalette, QIcon, QAction, QFontDatabase,
+    QFont, QColor, QPalette, QIcon, QAction, QFontDatabase, QFontInfo,
     QPixmap, QPainter, QBrush, QPen, QCursor,
 )
 
@@ -1621,7 +1621,7 @@ def main():
 
     # Monospace font as default
     font = QFont("Fira Code", 11)
-    if not QFontDatabase().hasFamily("Fira Code"):
+    if QFontInfo(font).family() != "Fira Code":
         font = QFont("Courier New", 11)
     app.setFont(font)
 

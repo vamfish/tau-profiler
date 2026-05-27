@@ -49,7 +49,9 @@ pub fn getInvariantTsc() bool {
     };
 }
 
-pub fn getVirtualization() struct { is_vm: bool, hv: []const u8 } {
+pub const VmInfo = struct { is_vm: bool, hv: []const u8 };
+
+pub fn getVirtualization() VmInfo {
     return switch (builtin.cpu.arch) {
         .x86_64 => getVirtualizationX86(),
         .aarch64 => getVirtualizationAarch64(),
@@ -137,13 +139,10 @@ fn getInvariantTscX86() bool {
           [edx] "={edx}" (edx)
         : [leaf] "{eax}" (0x80000007)
     );
-    _ = eax;
-    _ = ebx;
-    _ = ecx;
     return (edx & (1 << 8)) != 0;
 }
 
-fn getVirtualizationX86() struct { is_vm: bool, hv: []const u8 } {
+fn getVirtualizationX86() VmInfo {
     var ecx: u32 = undefined;
     var eax: u32 = undefined;
     var ebx: u32 = undefined;
@@ -155,9 +154,6 @@ fn getVirtualizationX86() struct { is_vm: bool, hv: []const u8 } {
           [edx] "={edx}" (edx)
         : [leaf] "{eax}" (1)
     );
-    _ = eax;
-    _ = ebx;
-    _ = edx;
     const hv_present = (ecx & (1 << 31)) != 0;
     if (!hv_present) return .{ .is_vm = false, .hv = "none" };
 
@@ -230,7 +226,7 @@ fn bindToCoreLinux(core: u32) bool {
         var result_mask: usize = 0;
         _ = std.os.linux.syscall3(SYS.sched_getaffinity, 0, @sizeOf(usize), @intFromPtr(&result_mask));
         return result_mask == mask;
-    }
+    };
     return false;
 }
 
@@ -285,7 +281,7 @@ fn getCpuBrandMacos(buffer: []u8) []u8 {
         const label = "Apple Silicon";
         @memcpy(buffer[0..label.len], label);
         return buffer[0..label.len];
-    }
+    };
     return "Apple Silicon";
 }
 
@@ -330,7 +326,7 @@ fn genericAarch64(buffer: []u8) []u8 {
     return buffer[0..label.len];
 }
 
-fn getVirtualizationAarch64() struct { is_vm: bool, hv: []const u8 } {
+fn getVirtualizationAarch64() VmInfo {
     if (builtin.os.tag == .linux) {
         // Check /sys/hypervisor first
         if (std.fs.accessAbsolute("/sys/hypervisor/type", .{})) {
@@ -377,7 +373,7 @@ fn getCoresSysctl(sysctl_name: []const u8) u32 {
             0,
         );
         if (rc == 0) return count;
-    }
+    };
     return 0;
 }
 
@@ -385,19 +381,39 @@ fn getCoresSysctl(sysctl_name: []const u8) u32 {
 //  Windows  helpers
 // ═══════════════════════════════════════════════════════════════
 
+const win32 = struct {
+    const HANDLE = *anyopaque;
+    const SYSTEM_INFO = extern struct {
+        wProcessorArchitecture: u16,
+        wReserved: u16,
+        dwPageSize: u32,
+        lpMinimumApplicationAddress: *anyopaque,
+        lpMaximumApplicationAddress: *anyopaque,
+        dwActiveProcessorMask: usize,
+        dwNumberOfProcessors: u32,
+        dwProcessorType: u32,
+        dwAllocationGranularity: u32,
+        wProcessorLevel: u16,
+        wProcessorRevision: u16,
+    };
+    extern "kernel32" fn GetSystemInfo(lpSystemInfo: *SYSTEM_INFO) callconv(.c) void;
+    extern "kernel32" fn SetThreadAffinityMask(hThread: HANDLE, dwThreadAffinityMask: usize) callconv(.c) usize;
+    extern "kernel32" fn GetCurrentThread() callconv(.c) HANDLE;
+};
+
 fn getCoresWindows() u32 {
     comptime if (builtin.os.tag != .windows) return 0;
 
-    var sys_info: std.os.windows.SYSTEM_INFO = undefined;
-    std.os.windows.GetSystemInfo(&sys_info);
+    var sys_info: win32.SYSTEM_INFO = undefined;
+    win32.GetSystemInfo(&sys_info);
     return @intCast(sys_info.dwNumberOfProcessors);
 }
 
 fn bindToCoreWindows(core: u32) bool {
     comptime if (builtin.os.tag != .windows) return false;
 
-    const mask: std.os.windows.ULONG_PTR = @as(std.os.windows.ULONG_PTR, 1) << @as(std.os.windows.ULONG_PTR, @intCast(core));
-    return std.os.windows.SetThreadAffinityMask(std.os.windows.GetCurrentThread(), mask) != 0;
+    const mask: usize = @as(usize, 1) << @as(u6, @intCast(core));
+    return win32.SetThreadAffinityMask(win32.GetCurrentThread(), mask) != 0;
 }
 
 // ═══════════════════════════════════════════════════════════════
@@ -421,7 +437,7 @@ pub fn readSysFile(path: []const u8, buffer: []u8) usize {
 
         if (bytes_read >> 63 != 0) return 0;
         return @as(usize, @intCast(bytes_read));
-    }
+    };
     return 0;
 }
 
@@ -443,7 +459,7 @@ fn countCoresFromSysfs(comptime package_file: []const u8, comptime core_file: []
             if (id < 64) seen |= @as(u64, 1) << @intCast(id);
         }
         return @intCast(@popCount(seen));
-    }
+    };
     return 0;
 }
 

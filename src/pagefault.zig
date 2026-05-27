@@ -26,7 +26,7 @@ pub fn measureMinorFaultLatency(allocator: std.mem.Allocator, num_pages: usize, 
     const total = num_pages * page_size;
 
     // Allocate (pages are virtual but not physically backed yet)
-    const buf = try allocator.alignedAlloc(u8, page_size, total);
+    const buf = try allocator.alignedAlloc(u8, @enumFromInt(std.math.log2(page_size)), total);
     defer allocator.free(buf);
 
     // First touch: trigger page faults
@@ -39,7 +39,7 @@ pub fn measureMinorFaultLatency(allocator: std.mem.Allocator, num_pages: usize, 
 
     // Second touch: should be in TLB + cache
     // First, flush cache by touching a large unrelated buffer
-    var flush = try allocator.alloc(u8, 4 * 1024 * 1024);
+    const flush = try allocator.alloc(u8, 4 * 1024 * 1024);
     defer allocator.free(flush);
     @memset(flush, 0);
 
@@ -71,9 +71,9 @@ pub fn measureTlbShootdown(allocator: std.mem.Allocator, num_pages: usize, timer
     const total = num_pages * page_size;
 
     // Allocate two large buffers
-    const buf_a = try allocator.alignedAlloc(u8, page_size, total);
+    const buf_a = try allocator.alignedAlloc(u8, @enumFromInt(std.math.log2(page_size)), total);
     defer allocator.free(buf_a);
-    const buf_b = try allocator.alignedAlloc(u8, page_size, total);
+    const buf_b = try allocator.alignedAlloc(u8, @enumFromInt(std.math.log2(page_size)), total);
     defer allocator.free(buf_b);
 
     // Fill both (fault in all pages)

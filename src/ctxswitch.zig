@@ -59,9 +59,9 @@ fn ctxSwitchFutex(iterations: usize, timer: *const Timer) struct { one_way_ns: f
 
     // Spawn thread B
     const thread_b = std.Thread.spawn(.{}, struct {
-        fn run(s: *FutexState, iters: usize) void {
+        fn run(s: *FutexState, iters: usize, b_pinned: bool) void {
             // Pin to same core if possible
-            if (pinned) _ = platform.bindToCore(0);
+            if (b_pinned) _ = platform.bindToCore(0);
 
             // Signal ready
             @atomicStore(u32, &s.ready, 1, .release);
@@ -76,7 +76,7 @@ fn ctxSwitchFutex(iterations: usize, timer: *const Timer) struct { one_way_ns: f
                 futexWake(&s.turn_b, 1);
             }
         }
-    }.run, .{ &state, iterations }) catch {
+    }.run, .{ &state, iterations, pinned }) catch {
         return .{ .one_way_ns = 0, .one_way_cycles = 0 };
     };
 
@@ -134,8 +134,8 @@ fn ctxSwitchYield(iterations: usize, timer: *const Timer) struct { one_way_ns: f
     const pinned = platform.bindToCore(0);
 
     const thread_b = std.Thread.spawn(.{}, struct {
-        fn run(s: *YieldState) void {
-            if (pinned) _ = platform.bindToCore(0);
+        fn run(s: *YieldState, b_pinned: bool) void {
+            if (b_pinned) _ = platform.bindToCore(0);
 
             @atomicStore(u32, &s.ready, 1, .release);
 
@@ -149,7 +149,7 @@ fn ctxSwitchYield(iterations: usize, timer: *const Timer) struct { one_way_ns: f
                 @atomicStore(u32, &s.flag, 0, .release);
             }
         }
-    }.run, .{&state}) catch {
+    }.run, .{ &state, pinned }) catch {
         return .{ .one_way_ns = 0, .one_way_cycles = 0 };
     };
 
@@ -190,11 +190,11 @@ fn ctxSwitchYield(iterations: usize, timer: *const Timer) struct { one_way_ns: f
 pub fn runCtxSwitch(allocator: std.mem.Allocator, timer: *const Timer) ![]CtxSwitchResult {
     const iterations: usize = 1000;
 
-    var results = std.ArrayList(CtxSwitchResult).init(allocator);
-    const errs = results.ensureUnusedCapacity(2) catch {};
+    var results: std.ArrayList(CtxSwitchResult) = .empty;
+    results.ensureUnusedCapacity(allocator, 2) catch {};
 
     // ── Fast path: Linux futex ──
-    comptime if (builtin.os.tag == .linux) {
+    if (builtin.os.tag == .linux) {
         std.debug.print("  Method: Linux futex\n", .{});
         const r = ctxSwitchFutex(iterations, timer);
         if (r.one_way_cycles > 0) {
@@ -210,7 +210,7 @@ pub fn runCtxSwitch(allocator: std.mem.Allocator, timer: *const Timer) ![]CtxSwi
     }
 
     // ── Fallback: yield-based ──
-    comptime if (builtin.os.tag != .linux) {
+    if (builtin.os.tag != .linux) {
         std.debug.print("  Method: cooperative yield\n", .{});
         const r = ctxSwitchYield(iterations, timer);
         if (r.one_way_cycles > 0) {
@@ -225,19 +225,17 @@ pub fn runCtxSwitch(allocator: std.mem.Allocator, timer: *const Timer) ![]CtxSwi
         }
     }
 
-    if (errs != {}) {
-        // If allocation was tight, return empty
-        if (results.items.len == 0) {
-            results.appendAssumeCapacity(CtxSwitchResult{
-                .label = "Context Switch",
-                .method = "unavailable",
-                .latency_ns = 0,
-                .latency_cycles = 0,
-                .confidence = 0,
-                .iterations = 0,
-            });
-        }
+    // If allocation was tight, return at least a placeholder
+    if (results.items.len == 0) {
+        results.appendAssumeCapacity(CtxSwitchResult{
+            .label = "Context Switch",
+            .method = "unavailable",
+            .latency_ns = 0,
+            .latency_cycles = 0,
+            .confidence = 0,
+            .iterations = 0,
+        });
     }
 
-    return results.toOwnedSlice();
+    return results.toOwnedSlice(allocator);
 }

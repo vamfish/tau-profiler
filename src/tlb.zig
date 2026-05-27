@@ -30,7 +30,7 @@ pub fn measureTlbLatency(allocator: std.mem.Allocator, num_pages: usize, stride_
     const alloc_size = num_pages * page_size;
 
     // Allocate an aligned region
-    const buf = try allocator.alignedAlloc(u8, page_size, alloc_size);
+    const buf = try allocator.alignedAlloc(u8, @enumFromInt(std.math.log2(page_size)), alloc_size);
     defer allocator.free(buf);
 
     // Zero it so the pages are faulted in
