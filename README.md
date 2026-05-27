@@ -1,14 +1,26 @@
 # ⏱️ Tau-Profiler
 
+[//]: # (ASCII art header)
+```
+  ████████╗ █████╗ ██╗   ██╗    ██████╗ ██████╗  ██████╗ ███████╗██╗██╗     ███████╗██████╗
+  ╚══██╔══╝██╔══██╗██║   ██║    ██╔══██╗██╔══██╗██╔═══██╗██╔════╝██║██║     ██╔════╝██╔══██╗
+     ██║   ███████║██║   ██║    ██████╔╝██████╔╝██║   ██║█████╗  ██║██║     █████╗  ██████╔╝
+     ██║   ██╔══██║██║   ██║    ██╔═══╝ ██╔══██╗██║   ██║██╔══╝  ██║██║     ██╔══╝  ██╔══██╗
+     ██║   ██║  ██║╚██████╔╝    ██║     ██║  ██║╚██████╔╝██║     ██║███████╗███████╗██║  ██║
+     ╚═╝   ╚═╝  ╚═╝ ╚═════╝     ╚═╝     ╚═╝  ╚═╝ ╚═════╝ ╚═╝     ╚═╝╚══════╝╚══════╝╚═╝  ╚═╝
+```
+
 Cross-platform memory subsystem latency probe.
-Supports Linux / macOS / Windows, x86_64 / AArch64.
+Supports **Linux / macOS / Windows**, **x86_64 / AArch64**.
 
 ## Benchmarks
 
-- Cache Latency: pointer chase 4KB->64MB (L1/L2/L3/DRAM)
-- TLB Reach: cross-page pointer chains (L1/L2 TLB)
-- Page Fault: first-touch vs second-touch timing
-- Context Switch: inter-thread signaling (estimates)
+| Benchmark | What it measures |
+|-----------|------------------|
+| **Cache Latency** | Pointer chase 4KB → 64MB (L1/L2/L3/DRAM hierarchy) |
+| **TLB Reach** | Cross-page pointer chains (L1/L2 TLB size & miss latency) |
+| **Page Fault** | First-touch vs second-touch timing (minor fault overhead) |
+| **Context Switch** | Inter-thread futex/yield ping-pong (scheduler latency) |
 
 ## Quick Start
 
@@ -16,7 +28,58 @@ Supports Linux / macOS / Windows, x86_64 / AArch64.
 git clone https://github.com/vamfish/tau-profiler.git
 cd tau-profiler
 zig build -Doptimize=ReleaseFast
+
+# CLI mode
 ./zig-out/bin/tau_profiler
+
+# GUI mode (requires Python + PyQt6)
+pip install -r requirements.txt
+python tau_gui.py
 ```
 
-Requires Zig >= 0.17.0-dev. Python 3 optional for tau_client.py.
+Requires **Zig >= 0.17.0-dev**. Python 3 with PyQt6 for the GUI client.
+
+##  Screenshot
+
+```
+⫸  TAU  PROFILER  ⫷
+┌──────────────────────────────────────────────────────────────┐
+│  🖥  DASHBOARD  │  📊  CACHE  │  📖  TLB  │  📄  PAGE FAULT  │  🔄  CTX  │  📋  REPORT  │
+├──────────────────────────────────────────────────────────────┤
+│  Platform: AMD Ryzen 5 3550H │ 8 logical cores │ WSL2      │
+│  τ_L1: 1.43ns  τ_L2: 3.34ns  τ_L3: 9.06ns  τ_DRAM: 141ns  │
+│  TSC: 2096.31 MHz                                           │
+│  [Interactive cache/TLB/pagefault/ctx-switch charts]        │
+└──────────────────────────────────────────────────────────────┘
+```
+
+## Features
+
+- **🖥 Dashboard** — system info, timer calibration, τ constants
+- **📊 Cache Chart** — bar/line/scatter for memory hierarchy latencies
+- **📖 TLB Chart** — page count vs latency, hierarchical breakdown
+- **📄 Page Fault Analysis** — minor fault & TLB shootdown overhead
+- **🔄 Context Switch** — futex vs yield ping-pong comparison
+- **📋 Report Export** — PDF (ReportLab) & HTML (dark hacker style)
+- **💾 Save Charts** — export interactive charts as PNG
+- **🎨 Hacker Theme** — green-on-black terminal aesthetic
+
+## Output
+
+```
+Tau_cycle: 477.03 ps
+┌──────────────────┬──────────┬───────────┬────────┐
+│ Cache Level      │ Size     │ Latency   │ Cycles │
+├──────────────────┼──────────┼───────────┼────────┤
+│ L1 Data Cache    │    32 KB │ 1.43 ns   │   3.26 │
+│ L2 Cache         │   256 KB │ 3.34 ns   │   7.62 │
+│ L3/LLC           │     4 MB │ 53.43 ns  │ 112.78 │
+│ DRAM Main Memory │    64 MB │ 141.20 ns │ 296.06 │
+└──────────────────┴──────────┴───────────┴────────┘
+```
+
+## Requirements
+
+- **Zig** ≥ 0.17.0-dev (build the engine)
+- **Python** ≥ 3.10 (GUI client)
+- **PyQt6** + **pyqtgraph** + **reportlab** (see `requirements.txt`)
