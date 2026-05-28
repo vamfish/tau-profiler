@@ -12,6 +12,12 @@ pub const PlatformInfo = struct {
     has_invariant_tsc: bool,
     is_virtualized: bool,
     virtualized_under: []const u8,
+    l1_data_kb: u32,
+    l1_inst_kb: u32,
+    l2_cache_kb: u32,
+    l3_cache_kb: u32,
+    cpu_max_ghz: f32,
+    cpu_base_ghz: f32,
 };
 
 // ─── Public API ────────────────────────────────────────────────
@@ -79,7 +85,7 @@ pub fn getPhysicalCores() u32 {
     return switch (builtin.os.tag) {
         .linux => getPhysicalCoresLinux(),
         .macos => getCoresSysctl("hw.physicalcpu"),
-        .windows => getCoresWindows(),
+        .windows => getPhysicalCoresWindows(),
         else => 0,
     };
 }
@@ -143,37 +149,197 @@ fn getInvariantTscX86() bool {
 }
 
 fn getVirtualizationX86() VmInfo {
-    var ecx: u32 = undefined;
+    // Use separate variables for each CPUID call to avoid register conflicts
+    // CPUID leaf 1: check hypervisor bit
+    var ecx1: u32 = undefined;
+    var eax1: u32 = undefined;
+    var ebx1: u32 = undefined;
+    var edx1: u32 = undefined;
+    asm volatile ("cpuid"
+        : [eax] "={eax}" (eax1),
+          [ebx] "={ebx}" (ebx1),
+          [ecx] "={ecx}" (ecx1),
+          [edx] "={edx}" (edx1)
+        : [leaf] "{eax}" (@as(u32, 1))
+    );
+    const hv_present = (ecx1 & (1 << 31)) != 0;
+    if (!hv_present) return .{ .is_vm = false, .hv = "none" };
+
+    // CPUID leaf 0x40000000: get hypervisor signature
+    var ecx2: u32 = undefined;
+    var eax2: u32 = undefined;
+    var ebx2: u32 = undefined;
+    var edx2: u32 = undefined;
+    asm volatile ("cpuid"
+        : [eax] "={eax}" (eax2),
+          [ebx] "={ebx}" (ebx2),
+          [ecx] "={ecx}" (ecx2),
+          [edx] "={edx}" (edx2)
+        : [leaf] "{eax}" (@as(u32, 0x40000000))
+    );
+    var sig: [12]u8 = undefined;
+    @memcpy(sig[0..4], std.mem.asBytes(&ebx2));
+    @memcpy(sig[4..8], std.mem.asBytes(&ecx2));
+    @memcpy(sig[8..12], std.mem.asBytes(&edx2));
+    const end = std.mem.indexOfScalar(u8, &sig, 0) orelse 12;
+    if (end >= 4 and std.mem.eql(u8, sig[0..4], "Micr")) {
+        // Hyper-V detected. Check if the hypervisor supports leaf 0x40000003
+        // (partition type). eax2 contains the max hypervisor CPUID leaf.
+        const hv_max_leaf = eax2;
+        if (hv_max_leaf >= 0x40000003) {
+            // CPUID leaf 0x40000003: EAX[7:0] = partition type
+            var ecx3: u32 = undefined;
+            var eax3: u32 = undefined;
+            var ebx3: u32 = undefined;
+            var edx3: u32 = undefined;
+            asm volatile ("cpuid"
+                : [eax] "={eax}" (eax3),
+                  [ebx] "={ebx}" (ebx3),
+                  [ecx] "={ecx}" (ecx3),
+                  [edx] "={edx}" (edx3)
+                : [leaf] "{eax}" (@as(u32, 0x40000003))
+            );
+            // partition_type: 0=root (bare metal), 1=enlightened VM, 2=un-enlightened VM
+            const partition_type = eax3 & 0xFF;
+            if (partition_type == 0) {
+                return .{ .is_vm = false, .hv = "Hyper-V (root partition)" };
+            }
+            return .{ .is_vm = true, .hv = "Hyper-V / WSL2" };
+        }
+        // Hypervisor doesn't expose partition info; assume bare metal if
+        // the Hyper-V platform is active on the host.
+        return .{ .is_vm = false, .hv = "Hyper-V (host)" };
+    }
+    if (end >= 4 and std.mem.eql(u8, sig[0..4], "KVMK")) return .{ .is_vm = true, .hv = "KVM" };
+    if (end >= 4 and std.mem.eql(u8, sig[0..4], "VMwa")) return .{ .is_vm = true, .hv = "VMware" };
+    if (end >= 4 and std.mem.eql(u8, sig[0..4], "XenV")) return .{ .is_vm = true, .hv = "Xen" };
+    return .{ .is_vm = true, .hv = "unknown" };
+}
+
+pub const CpuFreqInfo = struct {
+    base_ghz: f32 = 0,
+    max_ghz: f32 = 0,
+};
+
+pub fn getCpuFreqX86() CpuFreqInfo {
+    // First, get max supported CPUID leaf
     var eax: u32 = undefined;
     var ebx: u32 = undefined;
+    var ecx: u32 = undefined;
     var edx: u32 = undefined;
     asm volatile ("cpuid"
         : [eax] "={eax}" (eax),
           [ebx] "={ebx}" (ebx),
           [ecx] "={ecx}" (ecx),
           [edx] "={edx}" (edx)
-        : [leaf] "{eax}" (1)
+        : [leaf] "{eax}" (@as(u32, 0))
     );
-    const hv_present = (ecx & (1 << 31)) != 0;
-    if (!hv_present) return .{ .is_vm = false, .hv = "none" };
+    const max_leaf = eax;
 
-    asm volatile ("cpuid"
-        : [eax] "={eax}" (eax),
-          [ebx] "={ebx}" (ebx),
-          [ecx] "={ecx}" (ecx),
-          [edx] "={edx}" (edx)
-        : [leaf] "{eax}" (0x40000000)
-    );
-    var sig: [12]u8 = undefined;
-    @memcpy(sig[0..4], std.mem.asBytes(&ebx));
-    @memcpy(sig[4..8], std.mem.asBytes(&ecx));
-    @memcpy(sig[8..12], std.mem.asBytes(&edx));
-    const end = std.mem.indexOfScalar(u8, &sig, 0) orelse 12;
-    if (end >= 4 and std.mem.eql(u8, sig[0..4], "Micr")) return .{ .is_vm = true, .hv = "Hyper-V / WSL2" };
-    if (end >= 4 and std.mem.eql(u8, sig[0..4], "KVMK")) return .{ .is_vm = true, .hv = "KVM" };
-    if (end >= 4 and std.mem.eql(u8, sig[0..4], "VMwa")) return .{ .is_vm = true, .hv = "VMware" };
-    if (end >= 4 and std.mem.eql(u8, sig[0..4], "XenV")) return .{ .is_vm = true, .hv = "Xen" };
-    return .{ .is_vm = true, .hv = "unknown" };
+    if (max_leaf >= 0x16) {
+        // CPUID leaf 0x16: Processor Frequency Info (Intel Skylake+)
+        asm volatile ("cpuid"
+            : [eax] "={eax}" (eax),
+              [ebx] "={ebx}" (ebx),
+              [ecx] "={ecx}" (ecx),
+              [edx] "={edx}" (edx)
+            : [leaf] "{eax}" (@as(u32, 0x16))
+        );
+        const base_mhz: f32 = @floatFromInt(eax & 0xFFFF);
+        const max_mhz: f32 = @floatFromInt(ebx & 0xFFFF);
+        if (base_mhz > 0 and max_mhz > 0) {
+            return .{
+                .base_ghz = base_mhz / 1000.0,
+                .max_ghz = max_mhz / 1000.0,
+            };
+        }
+    }
+
+    if (max_leaf >= 0x15) {
+        // CPUID leaf 0x15: TSC / Core Crystal Clock Info
+        asm volatile ("cpuid"
+            : [eax] "={eax}" (eax),
+              [ebx] "={ebx}" (ebx),
+              [ecx] "={ecx}" (ecx),
+              [edx] "={edx}" (edx)
+            : [leaf] "{eax}" (@as(u32, 0x15))
+        );
+        const crystal_hz = @as(f32, @floatFromInt(ecx)); // Core crystal clock in Hz
+        if (crystal_hz > 0) {
+            return .{
+                .base_ghz = crystal_hz / 1_000_000_000.0,
+                .max_ghz = 0,
+            };
+        }
+    }
+
+    return .{ .base_ghz = 0, .max_ghz = 0 };
+}
+
+pub const CacheInfo = struct {
+    l1_data_kb: u32 = 0,
+    l1_inst_kb: u32 = 0,
+    l2_cache_kb: u32 = 0,
+    l3_cache_kb: u32 = 0,
+};
+
+pub fn getCacheInfo() CacheInfo {
+    return switch (builtin.cpu.arch) {
+        .x86_64 => getCacheInfoX86(),
+        .aarch64 => getCacheInfoAarch64(),
+        else => .{},
+    };
+}
+
+fn getCacheInfoX86() CacheInfo {
+    var info: CacheInfo = .{};
+
+    // Use CPUID leaf 0x4 (Deterministic Cache Parameters)
+    // Iterate subleaves until Cache Type == 0
+    var subleaf: u32 = 0;
+    while (subleaf < 16) : (subleaf += 1) {
+        var eax: u32 = undefined;
+        var ebx: u32 = undefined;
+        var ecx: u32 = undefined;
+        var edx: u32 = undefined;
+        asm volatile ("cpuid"
+            : [eax] "={eax}" (eax),
+              [ebx] "={ebx}" (ebx),
+              [ecx] "={ecx}" (ecx),
+              [edx] "={edx}" (edx)
+            : [leaf] "{eax}" (@as(u32, 0x4)),
+              [subleaf] "{ecx}" (subleaf)
+        );
+        const cache_type: u32 = eax & 0x1F;
+        if (cache_type == 0) break; // no more caches
+
+        const level: u32 = (eax >> 5) & 0x7;
+        const line_size: u32 = (ebx & 0xFFF) + 1;
+        const partitions: u32 = ((ebx >> 12) & 0x3FF) + 1;
+        const ways: u32 = ((ebx >> 22) & 0x3FF) + 1;
+        const sets: u32 = ecx + 1;
+        const size_bytes: u32 = ways * partitions * line_size * sets;
+        const size_kb: u32 = size_bytes / 1024;
+
+        // Store per-instance cache sizes from CPUID.
+        // The total capacity is computed later using core counts.
+        switch (level) {
+            1 => {
+                if (cache_type == 1) info.l1_data_kb = size_kb;
+                if (cache_type == 2) info.l1_inst_kb = size_kb;
+            },
+            2 => info.l2_cache_kb = size_kb,
+            3 => info.l3_cache_kb = size_kb,
+            else => {},
+        }
+    }
+
+    return info;
+}
+
+fn getCacheInfoAarch64() CacheInfo {
+    // AArch64: read cache info from system registers
+    return .{};
 }
 
 fn getCpuBrandX86(buffer: []u8) []u8 {
@@ -396,17 +562,58 @@ const win32 = struct {
         wProcessorLevel: u16,
         wProcessorRevision: u16,
     };
+    const CACHE_DESCRIPTOR = extern struct {
+        Level: u8,
+        Associativity: u8,
+        LineSize: u16,
+        Size: u32,
+        Type: u32,
+    };
+    const SLPI = extern struct {
+        Relationship: u32,
+        _pad: u32,
+        u: extern union {
+            ProcessorCore: extern struct { Flags: u8 },
+            NumaNode: u32,
+            Cache: CACHE_DESCRIPTOR,
+            Reserved: [2]u64,
+        },
+    };
     extern "kernel32" fn GetSystemInfo(lpSystemInfo: *SYSTEM_INFO) callconv(.c) void;
     extern "kernel32" fn SetThreadAffinityMask(hThread: HANDLE, dwThreadAffinityMask: usize) callconv(.c) usize;
     extern "kernel32" fn GetCurrentThread() callconv(.c) HANDLE;
+    extern "kernel32" fn GetLogicalProcessorInformation(buffer: ?*SLPI, returnedLength: *u32) callconv(.c) i32;
 };
 
 fn getCoresWindows() u32 {
+    // Returns logical cores (same as dwNumberOfProcessors)
     comptime if (builtin.os.tag != .windows) return 0;
-
     var sys_info: win32.SYSTEM_INFO = undefined;
     win32.GetSystemInfo(&sys_info);
     return @intCast(sys_info.dwNumberOfProcessors);
+}
+
+fn getPhysicalCoresWindows() u32 {
+    comptime if (builtin.os.tag != .windows) return 0;
+    var buf_len: u32 = 0;
+    _ = win32.GetLogicalProcessorInformation(null, &buf_len);
+    if (buf_len == 0) return 0;
+
+    const entry_size = @sizeOf(win32.SLPI);
+    const entry_count = buf_len / @as(u32, @intCast(entry_size));
+    if (entry_count > 256) return 0;
+
+    var buf: [256]win32.SLPI = undefined;
+    const rc = win32.GetLogicalProcessorInformation(@ptrCast(&buf), &buf_len);
+    if (rc == 0) return 0;
+
+    var phys: u32 = 0;
+    for (buf[0..@intCast(entry_count)]) |entry| {
+        if (entry.Relationship == 0) { // RelationProcessorCore
+            phys += 1;
+        }
+    }
+    return phys;
 }
 
 fn bindToCoreWindows(core: u32) bool {

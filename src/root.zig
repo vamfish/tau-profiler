@@ -5,7 +5,15 @@ pub const stats = @import("stats.zig");
 pub const tlb = @import("tlb.zig");
 pub const pagefault = @import("pagefault.zig");
 pub const ctxswitch = @import("ctxswitch.zig");
+pub const cpuid_info = @import("cpuid_info.zig");
 
 test {
-    @import("std").testing.refAllDeclsRecursive(@This());
+    _ = platform;
+    _ = timer;
+    _ = cache;
+    _ = stats;
+    _ = tlb;
+    _ = pagefault;
+    _ = ctxswitch;
+    _ = cpuid_info;
 }

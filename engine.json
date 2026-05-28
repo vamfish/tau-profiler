@@ -1,0 +1,96 @@
+{
+  "version": 2,
+  "timestamp": 1779926298,
+  "status": "success",
+  "calibration": {
+    "tsc_hz": 3711508388,
+    "calibrated": true
+  },
+  "platform": {
+    "os": "windows",
+    "arch": "x86_64",
+    "cpu_vendor": "intel",
+    "cpu_brand": "Intel(R) Xeon(R) W-2255 CPU @ 3.70GHz",
+    "physical_cores": 10,
+    "logical_cores": 20,
+    "page_size": 4096,
+    "has_invariant_tsc": true,
+    "is_virtualized": true,
+    "virtualized_under": "Hyper-V / WSL2",
+    "l1_data_kb": 320,
+    "l1_inst_kb": 320,
+    "l2_cache_kb": 10240,
+    "l3_cache_kb": 19712,
+    "cpu_base_ghz": 3.71,
+    "cpu_max_ghz": 3.71
+  },
+  "cache": [
+    {"label":"L1 Data Cache","size_bytes":4096,"latency_ns":3.2332,"latency_cycles":12.7118,"confidence":0.90},
+    {"label":"L1 Data Cache","size_bytes":8192,"latency_ns":3.2332,"latency_cycles":12.5103,"confidence":0.90},
+    {"label":"L1/L2 Transition","size_bytes":16384,"latency_ns":3.2332,"latency_cycles":12.4373,"confidence":0.90},
+    {"label":"L1/L2 Transition","size_bytes":32768,"latency_ns":3.2332,"latency_cycles":12.4586,"confidence":0.90},
+    {"label":"L2 Cache","size_bytes":65536,"latency_ns":7.8135,"latency_cycles":29.2679,"confidence":0.90},
+    {"label":"L2 Cache","size_bytes":131072,"latency_ns":9.6996,"latency_cycles":36.6339,"confidence":0.90},
+    {"label":"L2 Cache","size_bytes":262144,"latency_ns":9.1607,"latency_cycles":34.1600,"confidence":0.90},
+    {"label":"L3/LLC","size_bytes":524288,"latency_ns":8.8913,"latency_cycles":33.7903,"confidence":0.90},
+    {"label":"L3/LLC","size_bytes":1048576,"latency_ns":5.9275,"latency_cycles":22.6371,"confidence":0.90},
+    {"label":"L3/LLC","size_bytes":2097152,"latency_ns":19.6686,"latency_cycles":73.1283,"confidence":0.90},
+    {"label":"L3/LLC","size_bytes":4194304,"latency_ns":18.3214,"latency_cycles":68.8332,"confidence":0.90},
+    {"label":"Large LLC","size_bytes":8388608,"latency_ns":21.5546,"latency_cycles":80.8056,"confidence":0.90},
+    {"label":"Large LLC","size_bytes":16777216,"latency_ns":21.0157,"latency_cycles":78.9685,"confidence":0.90},
+    {"label":"Large LLC","size_bytes":33554432,"latency_ns":22.3629,"latency_cycles":83.1836,"confidence":0.90},
+    {"label":"DRAM Main Memory","size_bytes":67108864,"latency_ns":21.2851,"latency_cycles":79.2987,"confidence":0.90}
+  ],
+  "tlb": [
+    {"label":"L1 TLB","pages":2,"latency_ns":368.0444,"latency_cycles":1366.7500,"confidence":0.80},
+    {"label":"L1 TLB","pages":4,"latency_ns":158.1567,"latency_cycles":587.3750,"confidence":0.80},
+    {"label":"L1 TLB","pages":8,"latency_ns":88.6432,"latency_cycles":329.5000,"confidence":0.99},
+    {"label":"L2 TLB","pages":16,"latency_ns":43.3786,"latency_cycles":161.4375,"confidence":0.80},
+    {"label":"L2 TLB","pages":32,"latency_ns":24.5183,"latency_cycles":91.3438,"confidence":0.80},
+    {"label":"L2 TLB","pages":64,"latency_ns":14.8188,"latency_cycles":55.1719,"confidence":0.80},
+    {"label":"Page Walk","pages":128,"latency_ns":11.3162,"latency_cycles":42.6188,"confidence":0.99},
+    {"label":"Page Walk","pages":256,"latency_ns":13.2022,"latency_cycles":49.9707,"confidence":0.80},
+    {"label":"Page Walk","pages":512,"latency_ns":21.2851,"latency_cycles":79.8799,"confidence":0.80},
+    {"label":"Page Walk","pages":1024,"latency_ns":20.7463,"latency_cycles":77.2417,"confidence":0.80},
+    {"label":"Page Walk","pages":2048,"latency_ns":25.3266,"latency_cycles":94.6201,"confidence":0.80}
+  ],
+  "pagefault": [
+    {"label":"Minor Page Fault","pages":64,"total_bytes":262144,"first_touch_ns":600.7918,"second_touch_ns":24.1900,"fault_overhead_ns":576.6018},
+    {"label":"Minor Page Fault","pages":256,"total_bytes":1048576,"first_touch_ns":480.1788,"second_touch_ns":11.9182,"fault_overhead_ns":468.2606},
+    {"label":"Minor Page Fault","pages":1024,"total_bytes":4194304,"first_touch_ns":460.5965,"second_touch_ns":10.6620,"fault_overhead_ns":449.9345},
+    {"label":"Minor Page Fault","pages":4096,"total_bytes":16777216,"first_touch_ns":460.8392,"second_touch_ns":11.4785,"fault_overhead_ns":449.3607},
+    {"label":"TLB Shootdown / Ping-Pong","pages":64,"total_bytes":524288,"first_touch_ns":21.6051,"second_touch_ns":19.6180,"fault_overhead_ns":1.9871},
+    {"label":"TLB Shootdown / Ping-Pong","pages":256,"total_bytes":2097152,"first_touch_ns":16.7490,"second_touch_ns":12.5539,"fault_overhead_ns":4.1951},
+    {"label":"TLB Shootdown / Ping-Pong","pages":1024,"total_bytes":8388608,"first_touch_ns":23.8216,"second_touch_ns":12.8280,"fault_overhead_ns":10.9936}
+  ],
+  "ctxswitch": [
+    {"label":"Context Switch (yield)","method":"yield","latency_ns":708.0679,"latency_cycles":2628.7810,"confidence":0.60}
+  ],
+  "cpuid_info": {
+    "codename": "Cascade Lake-W",
+    "technology_nm": 14,
+    "socket": "Socket 2066 LGA",
+    "family": 6,
+    "model": 85,
+    "stepping": 7,
+    "cpuid_level": "0x16",
+    "cpuid_ext_level": "0x80000008",
+    "smt_supported": true,
+    "base_freq_mhz": 0,
+    "max_freq_mhz": 0,
+    "bus_freq_mhz": 0,
+    "turbo_supported": false,
+    "max_non_turbo_ratio": 0,
+    "features": ["MMX", "SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2", "EM64T", "AES", "AVX", "FMA3", "RDRAND", "BMI1", "BMI2", "AVX2", "AVX512F"],
+    "turbo_ratios": [],
+    "cache_details": [
+      {"level":1,"type":"Data","size_kb":32,"associativity":8,"line_size":64,"instances":10,"shared_by":2},
+      {"level":1,"type":"Instruction","size_kb":32,"associativity":8,"line_size":64,"instances":10,"shared_by":2},
+      {"level":2,"type":"Unified","size_kb":1024,"associativity":16,"line_size":64,"instances":10,"shared_by":2},
+      {"level":3,"type":"Unified","size_kb":19712,"associativity":11,"line_size":64,"instances":1,"shared_by":32}
+    ]
+  }},
+  "warnings": [
+    "Running inside a VM -- results may have extra jitter"
+  ]
+}

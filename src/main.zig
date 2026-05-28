@@ -7,6 +7,7 @@ const cache = @import("cache.zig");
 const tlb = @import("tlb.zig");
 const pagefault = @import("pagefault.zig");
 const ctxswitch = @import("ctxswitch.zig");
+const cpuid_info = @import("cpuid_info.zig");
 
 const Timer = timer_mod.Timer;
 
@@ -23,6 +24,7 @@ fn writeJson(
     pf_results: []const pagefault.PageFaultResult,
     ctx_results: []const ctxswitch.CtxSwitchResult,
     warnings: []const []const u8,
+    cpuid_data: ?cpuid_info.CpuidInfo,
 ) void {
     const out_file = std.Io.File.stdout();
     var buf: [131072]u8 = undefined;
@@ -52,7 +54,13 @@ fn writeJson(
     w.print("    \"page_size\": {},\n", .{info.page_size}) catch return;
     w.print("    \"has_invariant_tsc\": {},\n", .{info.has_invariant_tsc}) catch return;
     w.print("    \"is_virtualized\": {},\n", .{info.is_virtualized}) catch return;
-    w.print("    \"virtualized_under\": \"{s}\"\n", .{info.virtualized_under}) catch return;
+    w.print("    \"virtualized_under\": \"{s}\",\n", .{info.virtualized_under}) catch return;
+    w.print("    \"l1_data_kb\": {},\n", .{info.l1_data_kb}) catch return;
+    w.print("    \"l1_inst_kb\": {},\n", .{info.l1_inst_kb}) catch return;
+    w.print("    \"l2_cache_kb\": {},\n", .{info.l2_cache_kb}) catch return;
+    w.print("    \"l3_cache_kb\": {},\n", .{info.l3_cache_kb}) catch return;
+    w.print("    \"cpu_base_ghz\": {d:.2},\n", .{info.cpu_base_ghz}) catch return;
+    w.print("    \"cpu_max_ghz\": {d:.2}\n", .{info.cpu_max_ghz}) catch return;
     w.print("  }},\n", .{}) catch return;
 
     // ── Cache results ──
@@ -129,6 +137,62 @@ fn writeJson(
     }
     w.print("  ]", .{}) catch return;
 
+    // ── CPUID info ──
+    if (cpuid_data) |cd| {
+        w.print(",\n  \"cpuid_info\": {{\n", .{}) catch return;
+        w.print("    \"codename\": \"{s}\",\n", .{cd.codename}) catch return;
+        w.print("    \"technology_nm\": {},\n", .{cd.technology_nm}) catch return;
+        w.print("    \"socket\": \"{s}\",\n", .{cd.socket}) catch return;
+        w.print("    \"family\": {},\n", .{cd.family}) catch return;
+        w.print("    \"model\": {},\n", .{cd.model}) catch return;
+        w.print("    \"stepping\": {},\n", .{cd.stepping}) catch return;
+        w.print("    \"cpuid_level\": \"0x{x}\",\n", .{cd.cpuid_level}) catch return;
+        w.print("    \"cpuid_ext_level\": \"0x{x}\",\n", .{cd.cpuid_ext_level}) catch return;
+        w.print("    \"smt_supported\": {},\n", .{cd.smt_supported}) catch return;
+        w.print("    \"base_freq_mhz\": {},\n", .{cd.base_freq_mhz}) catch return;
+        w.print("    \"max_freq_mhz\": {},\n", .{cd.max_freq_mhz}) catch return;
+        w.print("    \"bus_freq_mhz\": {},\n", .{cd.bus_freq_mhz}) catch return;
+        w.print("    \"turbo_supported\": {},\n", .{cd.turbo_supported}) catch return;
+        w.print("    \"max_non_turbo_ratio\": {},\n", .{cd.max_non_turbo_ratio}) catch return;
+        w.writeAll("    \"features\": [") catch return;
+        for (cd.features[0..cd.features_count], 0..) |f, j| {
+            if (j > 0) w.writeAll(", ") catch return;
+            w.writeAll("\"") catch return;
+            w.writeAll(f) catch return;
+            w.writeAll("\"") catch return;
+        }
+        w.print("],\n", .{}) catch return;
+        w.writeAll("    \"turbo_ratios\": [") catch return;
+        for (cd.turbo_ratios[0..cd.turbo_ratio_count], 0..) |r, j| {
+            if (j > 0) w.writeAll(", ") catch return;
+            w.print("{}", .{r}) catch return;
+        }
+        w.print("],\n", .{}) catch return;
+        w.writeAll("    \"cache_details\": [\n") catch return;
+        for (cd.cache[0..cd.cache_count], 0..) |ce, j| {
+            const comma = if (j + 1 < cd.cache_count) "," else "";
+            const ct: []const u8 = switch (ce.cache_type) { 1 => "Data", 2 => "Instruction", 3 => "Unified", else => "Unknown" };
+            w.writeAll("      {\"level\":") catch return;
+            w.print("{}", .{ce.level}) catch return;
+            w.writeAll(",\"type\":\"") catch return;
+            w.writeAll(ct) catch return;
+            w.writeAll("\",\"size_kb\":") catch return;
+            w.print("{}", .{ce.size_kb}) catch return;
+            w.writeAll(",\"associativity\":") catch return;
+            w.print("{}", .{ce.associativity}) catch return;
+            w.writeAll(",\"line_size\":") catch return;
+            w.print("{}", .{ce.line_size}) catch return;
+            w.writeAll(",\"instances\":") catch return;
+            w.print("{}", .{ce.instances}) catch return;
+            w.writeAll(",\"shared_by\":") catch return;
+            w.print("{}", .{ce.shared_by}) catch return;
+            w.writeAll("}") catch return;
+            w.print("{s}\n", .{comma}) catch return;
+        }
+        w.writeAll("    ]\n") catch return;
+        w.writeAll("  }") catch return;
+    }
+
     // ── Warnings ──
     if (warnings.len > 0) {
         w.print(",\n  \"warnings\": [\n", .{}) catch return;
@@ -151,8 +215,10 @@ fn writeJson(
 pub fn main(init: std.process.Init) !void {
     const allocator = init.gpa;
     const io = init.io;
+    const debug = init.environ_map.get("TAU_DEBUG") != null;
 
     std.debug.print("=== Tau-Profiler Engine v0.3.0 ===\n", .{});
+    if (debug) std.debug.print("[DEBUG] Build: {s}\n", .{@tagName(builtin.mode)});
     std.debug.print("[1/5] Detecting platform...\n", .{});
 
     // ── Platform info ──
@@ -170,13 +236,35 @@ pub fn main(init: std.process.Init) !void {
         .has_invariant_tsc = platform.getInvariantTsc(),
         .is_virtualized = hv.is_vm,
         .virtualized_under = hv.hv,
+        .l1_data_kb = 0,
+        .l1_inst_kb = 0,
+        .l2_cache_kb = 0,
+        .l3_cache_kb = 0,
+        .cpu_max_ghz = 0,
+        .cpu_base_ghz = 0,
     };
     info.physical_cores = platform.getPhysicalCores();
     info.logical_cores = platform.getLogicalCores();
 
+    // ── Cache topology ──
+    const cache_info = platform.getCacheInfo();
+    // L1/L2 are per-physical-core; multiply to get totals. L3 is shared.
+    const phys = if (info.physical_cores > 0) info.physical_cores else @max(info.logical_cores, 1);
+    info.l1_data_kb = cache_info.l1_data_kb * phys;
+    info.l1_inst_kb = cache_info.l1_inst_kb * phys;
+    info.l2_cache_kb = cache_info.l2_cache_kb * phys;
+    info.l3_cache_kb = cache_info.l3_cache_kb;
+
+    // ── Comprehensive CPUID info ──
+    var cpuid_data: ?cpuid_info.CpuidInfo = null;
+    if (builtin.cpu.arch == .x86_64) {
+        cpuid_data = cpuid_info.collect(info.cpu_vendor, info.cpu_brand, info.physical_cores, info.logical_cores, 0) catch null;
+    }
+
     std.debug.print("  OS: {s}, Arch: {s}\n", .{ info.os, info.arch });
     std.debug.print("  CPU: {s}\n", .{info.cpu_brand});
     std.debug.print("  Cores: {}/{} (phys/logical)\n", .{ info.physical_cores, info.logical_cores });
+    std.debug.print("  L1: {}KB (d) / {}KB (i), L2: {}KB, L3: {}KB\n", .{ info.l1_data_kb, info.l1_inst_kb, info.l2_cache_kb, info.l3_cache_kb });
 
     var warnings: std.ArrayList([]const u8) = .empty;
     if (info.is_virtualized) {
@@ -249,11 +337,93 @@ pub fn main(init: std.process.Init) !void {
     };
     std.debug.print("    {d} ctx switch points\n", .{ctx_results.len});
 
+    // ── CPU frequency info ──
+    var max_ghz: f32 = 0;
+    var base_ghz: f32 = 0;
+    if (builtin.cpu.arch == .x86_64) {
+        const freq = platform.getCpuFreqX86();
+        base_ghz = freq.base_ghz;
+        max_ghz = freq.max_ghz;
+    }
+    // Fallback: use TSC calibration for base frequency
+    if (base_ghz <= 0 and timer.tsc_hz > 0) {
+        base_ghz = @as(f32, @floatCast(timer.tsc_hz / 1_000_000_000.0));
+    }
+    // Clamp turbo: if unavailable or below base, use base as minimum
+    if (max_ghz < base_ghz) {
+        max_ghz = base_ghz;
+    }
+    std.debug.print("\n  CPU Base:  {d:.2} GHz\n", .{base_ghz});
+    if (max_ghz > base_ghz) {
+        std.debug.print("  CPU Turbo: {d:.2} GHz\n", .{max_ghz});
+    }
+    info.cpu_base_ghz = base_ghz;
+    info.cpu_max_ghz = max_ghz;
+
     // ── Tau constants ──
     if (timer.tsc_hz > 0) {
         const cpu_ps = (1.0 / timer.tsc_hz) * 1.0e12;
-        std.debug.print("\n  Tau_cycle: {d:.2} ps\n", .{cpu_ps});
+        std.debug.print("  Tau_cycle: {d:.2} ps\n", .{cpu_ps});
     }
 
-    writeJson(io, info, &timer, cache_results, tlb_results, pf_results, ctx_results, warnings.items);
+    if (cpuid_data) |*cd| {
+        cd.tsc_hz = @as(u64, @intFromFloat(timer.tsc_hz));
+    }
+    writeJson(io, info, &timer, cache_results, tlb_results, pf_results, ctx_results, warnings.items, cpuid_data);
+}
+
+test "platform detection smoke test" {
+    const os = platform.getOS();
+    const arch = platform.getArch();
+    const vendor = platform.getCpuVendor();
+    try std.testing.expect(os.len > 0);
+    try std.testing.expect(arch.len > 0);
+    try std.testing.expect(vendor.len > 0);
+    _ = platform.getPhysicalCores();
+    _ = platform.getLogicalCores();
+    _ = platform.getVirtualization();
+    _ = platform.getCacheInfo();
+}
+
+test "core count is reasonable" {
+    const phys = platform.getPhysicalCores();
+    const logi = platform.getLogicalCores();
+    // Sanity: at least 1 core, at most 512
+    try std.testing.expect(phys >= 1);
+    try std.testing.expect(phys <= 512);
+    try std.testing.expect(logi >= 1);
+    try std.testing.expect(logi <= 1024);
+    if (logi > 0 and phys > 0) {
+        // Logical cores should be >= physical cores (HT/SMT)
+        try std.testing.expect(logi >= phys);
+    }
+}
+
+test "cache info is reasonable" {
+    const info = platform.getCacheInfo();
+    // Each cache level should either be 0 (unknown) or a reasonable size
+    try std.testing.expect(info.l1_data_kb == 0 or (info.l1_data_kb >= 8 and info.l1_data_kb <= 128));
+    try std.testing.expect(info.l1_inst_kb == 0 or (info.l1_inst_kb >= 8 and info.l1_inst_kb <= 128));
+    try std.testing.expect(info.l2_cache_kb == 0 or (info.l2_cache_kb >= 128 and info.l2_cache_kb <= 4096));
+    try std.testing.expect(info.l3_cache_kb == 0 or (info.l3_cache_kb >= 512 and info.l3_cache_kb <= 131072));
+}
+
+test "VM detection does not crash" {
+    const vm = platform.getVirtualization();
+    _ = vm.is_vm;
+    _ = vm.hv;
+    // On bare metal with Hyper-V platform, should not report as VM
+    // (This test just ensures the function runs without crashing)
+    if (vm.is_vm) {
+        try std.testing.expect(vm.hv.len > 0);
+    }
+}
+
+test "timer source detection is valid" {
+    // Just verify the static functions don't crash
+    const t0 = Timer.now();
+    const t1 = Timer.now();
+    try std.testing.expect(t1 >= t0);
+    const overhead = Timer.measureOverhead();
+    try std.testing.expect(overhead >= 0);
 }

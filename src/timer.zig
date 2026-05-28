@@ -30,7 +30,7 @@ pub const Timer = struct {
     /// Read the current cycle counter / timestamp.
     pub fn now() u64 {
         return switch (builtin.cpu.arch) {
-            .x86_64 => readRdtscp(),
+            .x86_64 => if (hasRdtscp()) readRdtscp() else readRdtsc(),
             .aarch64 => readCntvct(),
             else => fallbackNow(),
         };
@@ -60,10 +60,34 @@ pub const Timer = struct {
 
     fn detectSource() TimerSource {
         return switch (builtin.cpu.arch) {
-            .x86_64 => .rdtscp,
+            .x86_64 => if (hasRdtscp()) .rdtscp else .fallback,
             .aarch64 => .cntvct,
             else => .fallback,
         };
+    }
+
+    fn hasRdtscp() bool {
+        var eax: u32 = undefined;
+        var ebx: u32 = undefined;
+        var ecx: u32 = undefined;
+        var edx: u32 = undefined;
+        asm volatile ("cpuid"
+            : [eax] "={eax}" (eax),
+              [ebx] "={ebx}" (ebx),
+              [ecx] "={ecx}" (ecx),
+              [edx] "={edx}" (edx)
+            : [leaf] "{eax}" (@as(u32, 0x80000000))
+        );
+        if (eax < 0x80000001) return false;
+
+        asm volatile ("cpuid"
+            : [eax] "={eax}" (eax),
+              [ebx] "={ebx}" (ebx),
+              [ecx] "={ecx}" (ecx),
+              [edx] "={edx}" (edx)
+            : [leaf] "{eax}" (@as(u32, 0x80000001))
+        );
+        return (edx & (1 << 27)) != 0; // RDTSCP supported
     }
 
     fn calibrate(self: *Timer, io: std.Io) !f64 {
@@ -139,6 +163,16 @@ fn readRdtscp() u64 {
           [aux] "={ecx}" (aux)
     );
     std.mem.doNotOptimizeAway(aux);
+    return (@as(u64, hi) << 32) | lo;
+}
+
+fn readRdtsc() u64 {
+    var lo: u32 = undefined;
+    var hi: u32 = undefined;
+    asm volatile ("rdtsc"
+        : [lo] "={eax}" (lo),
+          [hi] "={edx}" (hi)
+    );
     return (@as(u64, hi) << 32) | lo;
 }
 

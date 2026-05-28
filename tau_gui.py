@@ -443,6 +443,7 @@ class TauProfilerGUI(QMainWindow):
 
         # Build tabs
         self.tab_dashboard = self._build_dashboard_tab()
+        self.tab_cpuinfo = self._build_cpuinfo_tab()
         self.tab_cache = self._build_cache_tab()
         self.tab_tlb = self._build_tlb_tab()
         self.tab_pagefault = self._build_pagefault_tab()
@@ -450,6 +451,7 @@ class TauProfilerGUI(QMainWindow):
         self.tab_report = self._build_report_tab()
 
         self.tabs.addTab(self.tab_dashboard, "  🖥  DASHBOARD  ")
+        self.tabs.addTab(self.tab_cpuinfo, "  💻  CPU INFO  ")
         self.tabs.addTab(self.tab_cache, "  📊  CACHE  ")
         self.tabs.addTab(self.tab_tlb, "  📖  TLB  ")
         self.tabs.addTab(self.tab_pagefault, "  📄  PAGE FAULT  ")
@@ -551,7 +553,8 @@ class TauProfilerGUI(QMainWindow):
         self.dash_platform_grid.setSpacing(6)
         self.dash_platform.layout.addLayout(self.dash_platform_grid)
         self.dash_platform_labels = {}
-        for i, key in enumerate(["OS", "Arch", "CPU", "Vendor", "Cores", "Page Size", "Virtualized"]):
+        for i, key in enumerate(["OS", "Arch", "CPU", "Vendor", "Cores (P/L)", "Page Size",
+                                   "L1d / L1i", "L2 / L3", "Base / Turbo", "Virtualized"]):
             lbl_k = HackerLabel(f"  {key}", dim=True, size=11)
             lbl_v = HackerLabel("—", accent=True, size=11)
             self.dash_platform_grid.addWidget(lbl_k, i, 0)
@@ -592,6 +595,116 @@ class TauProfilerGUI(QMainWindow):
         self.dash_warnings_labels = []
         self.dash_warnings.layout.addWidget(QLabel("   (no warnings)"))
         layout.addWidget(self.dash_warnings)
+
+        layout.addStretch()
+        return scroll
+
+    def _build_cpuinfo_tab(self):
+        scroll = QScrollArea()
+        scroll.setWidgetResizable(True)
+        scroll.setFrameShape(QFrame.Shape.NoFrame)
+        inner = QWidget()
+        scroll.setWidget(inner)
+        layout = QVBoxLayout(inner)
+        layout.setSpacing(12)
+        layout.setContentsMargins(16, 16, 16, 16)
+
+        # ── Processor Info ──
+        self.ci_proc = HackerFrame("Processor Identification")
+        self.ci_proc_grid = QGridLayout()
+        self.ci_proc_grid.setSpacing(4)
+        self.ci_proc.layout.addLayout(self.ci_proc_grid)
+        self.ci_proc_labels = {}
+        keys = ["Name", "Codename", "Technology", "Socket", "Specification",
+                "CPUID (F/M/S)", "Ext. Family/Model", "Core Stepping",
+                "Max CPUID Level", "Max Ext. Level", "SMT (Hyper-Threading)"]
+        for i, key in enumerate(keys):
+            lbl_k = HackerLabel(f"  {key}", dim=True, size=11)
+            lbl_v = HackerLabel("—", accent=True, size=11)
+            self.ci_proc_grid.addWidget(lbl_k, i, 0)
+            self.ci_proc_grid.addWidget(lbl_v, i, 1)
+            self.ci_proc_labels[key] = lbl_v
+        layout.addWidget(self.ci_proc)
+
+        # ── Core Topology ──
+        self.ci_topo = HackerFrame("Core Topology")
+        self.ci_topo_grid = QGridLayout()
+        self.ci_topo_grid.setSpacing(4)
+        self.ci_topo.layout.addLayout(self.ci_topo_grid)
+        self.ci_topo_labels = {}
+        for i, key in enumerate(["Sockets", "Physical Cores", "Logical Threads",
+                                   "Core/Thread Ratio", "APIC IDs (first core)"]):
+            lbl_k = HackerLabel(f"  {key}", dim=True, size=11)
+            lbl_v = HackerLabel("—", accent=True, size=11)
+            self.ci_topo_grid.addWidget(lbl_k, i, 0)
+            self.ci_topo_grid.addWidget(lbl_v, i, 1)
+            self.ci_topo_labels[key] = lbl_v
+        layout.addWidget(self.ci_topo)
+
+        # ── Cache Details ──
+        self.ci_cache = HackerFrame("Cache Hierarchy")
+        self.ci_cache_grid = QGridLayout()
+        self.ci_cache_grid.setSpacing(4)
+        self.ci_cache.layout.addLayout(self.ci_cache_grid)
+        self.ci_cache_labels = {}
+        cache_keys = [
+            "L1 Data", "L1 Instruction", "L2 Unified", "L3 Unified",
+        ]
+        for i, key in enumerate(cache_keys):
+            lbl_k = HackerLabel(f"  {key}", dim=True, size=11)
+            lbl_v = HackerLabel("—", accent=True, size=11)
+            self.ci_cache_grid.addWidget(lbl_k, i, 0)
+            self.ci_cache_grid.addWidget(lbl_v, i, 1)
+            self.ci_cache_labels[key] = lbl_v
+        layout.addWidget(self.ci_cache)
+
+        # ── Features ──
+        self.ci_feat = HackerFrame("Instruction Sets")
+        self.ci_feat_text = QTextEdit()
+        self.ci_feat_text.setReadOnly(True)
+        self.ci_feat_text.setMaximumHeight(100)
+        self.ci_feat_text.setStyleSheet(f"""
+            background: {THEME['bg']}; color: {THEME['accent']};
+            border: 1px solid {THEME['border']}; border-radius: 4px;
+            font-family: 'Fira Code', 'JetBrains Mono', 'Consolas', monospace;
+            font-size: 12px;
+        """)
+        self.ci_feat.layout.addWidget(self.ci_feat_text)
+        layout.addWidget(self.ci_feat)
+
+        # ── Frequency & Turbo ──
+        self.ci_freq = HackerFrame("Frequency & Turbo")
+        self.ci_freq_grid = QGridLayout()
+        self.ci_freq_grid.setSpacing(4)
+        self.ci_freq.layout.addLayout(self.ci_freq_grid)
+        self.ci_freq_labels = {}
+        freq_keys = [
+            "Base Frequency (CPUID)", "Max Turbo (CPUID)",
+            "Bus Speed (BCLK)", "TSC Frequency (calibrated)",
+            "τ cycle", "Turbo Mode", "Max Non-Turbo Ratio",
+            "Per-Core Turbo Ratios",
+        ]
+        for i, key in enumerate(freq_keys):
+            lbl_k = HackerLabel(f"  {key}", dim=True, size=11)
+            lbl_v = HackerLabel("—", accent=True, size=11)
+            self.ci_freq_grid.addWidget(lbl_k, i, 0)
+            self.ci_freq_grid.addWidget(lbl_v, i, 1)
+            self.ci_freq_labels[key] = lbl_v
+        layout.addWidget(self.ci_freq)
+
+        # ── Virtualization ──
+        self.ci_virt = HackerFrame("Virtualization")
+        self.ci_virt_grid = QGridLayout()
+        self.ci_virt_grid.setSpacing(4)
+        self.ci_virt.layout.addLayout(self.ci_virt_grid)
+        self.ci_virt_labels = {}
+        for i, key in enumerate(["Hypervisor", "VM Status"]):
+            lbl_k = HackerLabel(f"  {key}", dim=True, size=11)
+            lbl_v = HackerLabel("—", accent=True, size=11)
+            self.ci_virt_grid.addWidget(lbl_k, i, 0)
+            self.ci_virt_grid.addWidget(lbl_v, i, 1)
+            self.ci_virt_labels[key] = lbl_v
+        layout.addWidget(self.ci_virt)
 
         layout.addStretch()
         return scroll
@@ -755,6 +868,7 @@ class TauProfilerGUI(QMainWindow):
         self.data = data
         self._set_busy(False)
         self._populate_dashboard(data)
+        self._populate_cpuinfo(data)
         self._populate_cache(data)
         self._populate_tlb(data)
         self._populate_pagefault(data)
@@ -783,13 +897,22 @@ class TauProfilerGUI(QMainWindow):
         plat = data.get("platform", {})
         cal = data.get("calibration", {})
 
+        l1d = plat.get('l1_data_kb', 0)
+        l1i = plat.get('l1_inst_kb', 0)
+        l2 = plat.get('l2_cache_kb', 0)
+        l3 = plat.get('l3_cache_kb', 0)
+        base = plat.get('cpu_base_ghz', 0)
+        turbo = plat.get('cpu_max_ghz', 0)
         mapping = {
             "OS": f"{plat.get('os', '?')}",
             "Arch": f"{plat.get('arch', '?')}",
             "CPU": f"{plat.get('cpu_brand', '?')}",
             "Vendor": f"{plat.get('cpu_vendor', '?')}",
-            "Cores": f"{plat.get('physical_cores', '?')}P / {plat.get('logical_cores', '?')}L",
+            "Cores (P/L)": f"{plat.get('physical_cores', '?')}P / {plat.get('logical_cores', '?')}L",
             "Page Size": fmt_size(plat.get('page_size', 4096)),
+            "L1d / L1i": f"{fmt_size(l1d*1024)} / {fmt_size(l1i*1024)}",
+            "L2 / L3": f"{fmt_size(l2*1024)} / {fmt_size(l3*1024)}" if (l2 + l3) > 0 else "—",
+            "Base / Turbo": f"{base:.2f} / {turbo:.2f} GHz" if base > 0 else "—",
             "Virtualized": f"{plat.get('is_virtualized', '?')} ({plat.get('virtualized_under', '?')})",
         }
         for k, v in mapping.items():
@@ -866,6 +989,117 @@ class TauProfilerGUI(QMainWindow):
             "τ_DRAM": avg_by_size(32 * 1024 * 1024, 10**12),
         }
 
+    # ── CPU Info Tab ──────────────────────────────────────────────
+
+    def _populate_cpuinfo(self, data: dict):
+        cpuid = data.get("cpuid_info")
+        plat = data.get("platform", {})
+        cal = data.get("calibration", {})
+
+        if not cpuid:
+            # No CPUID data (non-x86 platform or engine too old)
+            for lbl in self.ci_proc_labels.values():
+                lbl.setText("  (unavailable)")
+            return
+
+        # ── Processor Identification ──
+        proc_map = {
+            "Name": cpuid.get("codename", "?"),
+            "Codename": cpuid.get("codename", "?"),
+            "Technology": f"{cpuid.get('technology_nm', '?')} nm" if cpuid.get("technology_nm", 0) > 0 else "—",
+            "Socket": cpuid.get("socket", "?"),
+            "Specification": plat.get("cpu_brand", "?"),
+            "CPUID (F/M/S)": f"{cpuid.get('family','?')}.{cpuid.get('model','?'):X}.{cpuid.get('stepping','?')}",
+            "Ext. Family/Model": f"{cpuid.get('ext_family','?')}/{cpuid.get('ext_model','?')}",
+            "Core Stepping": f"Stepping {cpuid.get('stepping','?')}",
+            "Max CPUID Level": f"0x{cpuid.get('cpuid_level','?'):X}" if isinstance(cpuid.get('cpuid_level'), int) else str(cpuid.get('cpuid_level','?')),
+            "Max Ext. Level": f"0x{cpuid.get('cpuid_ext_level','?'):X}" if isinstance(cpuid.get('cpuid_ext_level'), int) else str(cpuid.get('cpuid_ext_level','?')),
+            "SMT (Hyper-Threading)": "✓ Supported" if cpuid.get("smt_supported") else "✗ Not supported",
+        }
+        for k, v in proc_map.items():
+            if k in self.ci_proc_labels:
+                self.ci_proc_labels[k].setText(f"  {v}")
+
+        # ── Core Topology ──
+        phys = plat.get("physical_cores", "?")
+        logi = plat.get("logical_cores", "?")
+        self.ci_topo_labels["Sockets"].setText(f"  1 (detected)")
+        self.ci_topo_labels["Physical Cores"].setText(f"  {phys}")
+        self.ci_topo_labels["Logical Threads"].setText(f"  {logi}")
+        try:
+            ratio = f"{float(logi)/float(phys):.1f}x" if phys and int(phys) > 0 else "—"
+        except (ValueError, ZeroDivisionError):
+            ratio = "—"
+        self.ci_topo_labels["Core/Thread Ratio"].setText(f"  {ratio}")
+        self.ci_topo_labels["APIC IDs (first core)"].setText(f"  (see engine stderr for details)")
+
+        # ── Cache Details ──
+        cache_details = cpuid.get("cache_details", [])
+        cache_lines = {"L1 Data": None, "L1 Instruction": None, "L2 Unified": None, "L3 Unified": None}
+        for cd in cache_details:
+            level = cd.get("level", 0)
+            ctype = cd.get("type", "")
+            key = f"L{level} {ctype}"
+            size_kb = cd.get("size_kb", 0)
+            assoc = cd.get("associativity", 0)
+            line = cd.get("line_size", 0)
+            inst = cd.get("instances", 1)
+            shared = cd.get("shared_by", 1)
+            total_kb = size_kb * inst
+            detail = f"{inst} x {fmt_size(total_kb*1024)} ({assoc}-way, {line}-byte line, shared by {shared} thread(s))"
+            if key in cache_lines:
+                cache_lines[key] = detail
+            elif level == 2:
+                cache_lines["L2 Unified"] = detail
+            elif level == 3:
+                cache_lines["L3 Unified"] = detail
+        for k, v in cache_lines.items():
+            if k in self.ci_cache_labels:
+                self.ci_cache_labels[k].setText(f"  {v if v else '—'}")
+
+        # ── Features ──
+        features = cpuid.get("features", [])
+        if features:
+            self.ci_feat_text.setText(", ".join(features))
+        else:
+            self.ci_feat_text.setText("(no feature data)")
+
+        # ── Frequency ──
+        base_mhz = cpuid.get("base_freq_mhz", 0)
+        turbo_mhz = cpuid.get("max_freq_mhz", 0)
+        bus_mhz = cpuid.get("bus_freq_mhz", 0)
+        self.ci_freq_labels["Base Frequency (CPUID)"].setText(
+            f"  {base_mhz} MHz ({base_mhz/1000:.2f} GHz)" if base_mhz > 0 else "  —")
+        self.ci_freq_labels["Max Turbo (CPUID)"].setText(
+            f"  {turbo_mhz} MHz ({turbo_mhz/1000:.2f} GHz)" if turbo_mhz > 0 else "  —")
+        self.ci_freq_labels["Bus Speed (BCLK)"].setText(
+            f"  {bus_mhz:.1f} MHz" if bus_mhz > 0 else "  —")
+
+        if cal.get("calibrated"):
+            hz = cal["tsc_hz"]
+            self.ci_freq_labels["TSC Frequency (calibrated)"].setText(f"  {hz/1_000_000:.2f} MHz")
+            self.ci_freq_labels["τ cycle"].setText(f"  {(1.0/hz)*1e12:.2f} ps")
+        else:
+            self.ci_freq_labels["TSC Frequency (calibrated)"].setText("  —")
+            self.ci_freq_labels["τ cycle"].setText("  —")
+
+        self.ci_freq_labels["Turbo Mode"].setText(
+            "  Supported" if cpuid.get("turbo_supported") else "  —")
+        self.ci_freq_labels["Max Non-Turbo Ratio"].setText(
+            f"  {cpuid.get('max_non_turbo_ratio', '—')}x")
+
+        turbo_ratios = cpuid.get("turbo_ratios", [])
+        if turbo_ratios and any(r > 0 for r in turbo_ratios):
+            ratio_str = ", ".join(f"C{i}:{r/10:.1f}x" for i, r in enumerate(turbo_ratios[:8]) if r > 0)
+            self.ci_freq_labels["Per-Core Turbo Ratios"].setText(f"  {ratio_str}")
+        else:
+            self.ci_freq_labels["Per-Core Turbo Ratios"].setText("  (MSR needed)")
+
+        # ── Virtualization ──
+        self.ci_virt_labels["Hypervisor"].setText(f"  {plat.get('virtualized_under', 'none')}")
+        self.ci_virt_labels["VM Status"].setText(
+            "  Running in VM" if plat.get("is_virtualized") else "  Bare metal")
+
     # ── Cache Charts ──────────────────────────────────────────────
 
     def _populate_cache(self, data: dict):
@@ -881,11 +1115,19 @@ class TauProfilerGUI(QMainWindow):
             self.cache_info.setText("(no cache data)")
             return
 
-        labels = [r.get("label", f"L{i}") for i, r in enumerate(results)]
+        labels_long = [r.get("label", f"L{i}") for i, r in enumerate(results)]
         lats = [r["latency_ns"] for r in results]
         sizes = [r.get("size", 0) for r in results]
         confs = [r.get("confidence", 0) for r in results]
         cycles = [r.get("latency_cycles", 0) for r in results]
+        # Create compact labels: "L1 4KB", "L2 256KB", etc.
+        labels = []
+        for r in results:
+            sz = r.get("size", 0)
+            lbl = r.get("label", "")
+            parts = lbl.split()
+            tier = parts[0] if parts else lbl  # L1, L2, L3, DRAM
+            labels.append(f"{tier} {fmt_size(sz)}")
 
         chart_type = self.cache_chart_type.currentText()
         colors_c = THEME["colors"]
@@ -1052,26 +1294,35 @@ class TauProfilerGUI(QMainWindow):
             self.ctx_info.setText("(all context switch results pending)")
             return
 
-        labels = [r.get("label", f"CS-{i}") for i, r in enumerate(valid)]
+        labels = [r.get("method", r.get("label", f"CS-{i}")) for i, r in enumerate(valid)]
         lats = [r["latency_ns"] for r in valid]
 
+        # Wider bar chart with improved visuals
         bg = pg.BarGraphItem(
             x=list(range(len(valid))),
             height=lats,
-            width=0.6,
+            width=0.4,
             brushes=[THEME["colors"][i % len(THEME["colors"])] for i in range(len(valid))],
         )
         self.ctx_plot.addItem(bg)
 
-        # Horizontal reference lines
+        # Value labels on top of each bar
+        for i, (lat, label) in enumerate(zip(lats, labels)):
+            text = pg.TextItem(text=fmt_ns(lat), color=THEME["accent"], anchor=(0.5, 0))
+            text.setPos(i, lat)
+            self.ctx_plot.addItem(text)
+
+        # Horizontal reference line at average
         if lats:
-            min_lat = min(lats)
-            max_lat = max(lats)
-            median_line = pg.InfiniteLine(pos=sum(lats)/len(lats), angle=0,
-                                          pen=pg.mkPen(THEME["cyan"], width=1, style=Qt.PenStyle.DashLine))
-            self.ctx_plot.addItem(median_line)
+            avg_lat = sum(lats) / len(lats)
+            avg_line = pg.InfiniteLine(pos=avg_lat, angle=0,
+                                       pen=pg.mkPen(THEME["cyan"], width=1, style=Qt.PenStyle.DashLine),
+                                       label=f"avg = {fmt_ns(avg_lat)}",
+                                       labelOpts={"color": THEME["cyan"], "position": 0.95})
+            self.ctx_plot.addItem(avg_line)
 
         self.ctx_plot.getAxis("bottom").setTicks([list(enumerate(labels))])
+        self.ctx_plot.setXRange(-0.8, max(len(valid) - 0.2, 0.8))
 
         info = []
         info.append(f"{'Method':<30} {'Latency':<15} {'Cycles':<10} {'Conf':<8}")

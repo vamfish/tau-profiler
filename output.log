@@ -1,0 +1,121 @@
+=== Tau-Profiler Engine v0.3.0 ===
+[1/5] Detecting platform...
+  OS: windows, Arch: x86_64
+  CPU: Intel(R) Xeon(R) W-2255 CPU @ 3.70GHz
+  Cores: 10/20 (phys/logical)
+  L1: 320KB (d) / 320KB (i), L2: 10240KB, L3: 19712KB
+[2/5] Calibrating timer...
+  Source: RDTSCP
+  Freq:   3706.79 MHz
+  Timer overhead: 8924 ticks
+[3/5] Pinning to core 0...
+  OK
+[4/5] Cache latency sweep (4KB -> 64MB)...
+  Completed 15 cache points
+[5/5] Extended benchmarks...
+  TLB probe...
+    11 TLB points
+  Page fault probe...
+    7 page fault points
+  Context switch probe...
+  Method: cooperative yield
+    1 ctx switch points
+
+  CPU Base:  3.71 GHz
+  Tau_cycle: 269.78 ps
+{
+  "version": 2,
+  "timestamp": 1779926240,
+  "status": "success",
+  "calibration": {
+    "tsc_hz": 3706785141,
+    "calibrated": true
+  },
+  "platform": {
+    "os": "windows",
+    "arch": "x86_64",
+    "cpu_vendor": "intel",
+    "cpu_brand": "Intel(R) Xeon(R) W-2255 CPU @ 3.70GHz",
+    "physical_cores": 10,
+    "logical_cores": 20,
+    "page_size": 4096,
+    "has_invariant_tsc": true,
+    "is_virtualized": true,
+    "virtualized_under": "Hyper-V / WSL2",
+    "l1_data_kb": 320,
+    "l1_inst_kb": 320,
+    "l2_cache_kb": 10240,
+    "l3_cache_kb": 19712,
+    "cpu_base_ghz": 3.71,
+    "cpu_max_ghz": 3.71
+  },
+  "cache": [
+    {"label":"L1 Data Cache","size_bytes":4096,"latency_ns":3.2373,"latency_cycles":12.7048,"confidence":0.90},
+    {"label":"L1 Data Cache","size_bytes":8192,"latency_ns":3.2373,"latency_cycles":12.5167,"confidence":0.90},
+    {"label":"L1/L2 Transition","size_bytes":16384,"latency_ns":3.2373,"latency_cycles":12.7222,"confidence":0.90},
+    {"label":"L1/L2 Transition","size_bytes":32768,"latency_ns":3.2373,"latency_cycles":12.4567,"confidence":0.90},
+    {"label":"L2 Cache","size_bytes":65536,"latency_ns":7.8235,"latency_cycles":29.2616,"confidence":0.90},
+    {"label":"L2 Cache","size_bytes":131072,"latency_ns":9.7119,"latency_cycles":36.5500,"confidence":0.90},
+    {"label":"L2 Cache","size_bytes":262144,"latency_ns":9.1724,"latency_cycles":34.4059,"confidence":0.90},
+    {"label":"L3/LLC","size_bytes":524288,"latency_ns":7.8235,"latency_cycles":29.0881,"confidence":0.90},
+    {"label":"L3/LLC","size_bytes":1048576,"latency_ns":6.2048,"latency_cycles":23.5734,"confidence":0.90},
+    {"label":"L3/LLC","size_bytes":2097152,"latency_ns":19.4238,"latency_cycles":72.1320,"confidence":0.90},
+    {"label":"L3/LLC","size_bytes":4194304,"latency_ns":18.3447,"latency_cycles":68.9662,"confidence":0.90},
+    {"label":"Large LLC","size_bytes":8388608,"latency_ns":25.6287,"latency_cycles":95.5188,"confidence":0.90},
+    {"label":"Large LLC","size_bytes":16777216,"latency_ns":21.3123,"latency_cycles":79.8671,"confidence":0.90},
+    {"label":"Large LLC","size_bytes":33554432,"latency_ns":20.7727,"latency_cycles":77.6295,"confidence":0.90},
+    {"label":"DRAM Main Memory","size_bytes":67108864,"latency_ns":20.7727,"latency_cycles":77.5895,"confidence":0.90}
+  ],
+  "tlb": [
+    {"label":"L1 TLB","pages":2,"latency_ns":365.0063,"latency_cycles":1353.5000,"confidence":0.80},
+    {"label":"L1 TLB","pages":4,"latency_ns":158.8978,"latency_cycles":589.1000,"confidence":0.99},
+    {"label":"L1 TLB","pages":8,"latency_ns":78.5047,"latency_cycles":291.6875,"confidence":0.80},
+    {"label":"L2 TLB","pages":16,"latency_ns":41.2757,"latency_cycles":153.8750,"confidence":0.80},
+    {"label":"L2 TLB","pages":32,"latency_ns":24.2798,"latency_cycles":90.4531,"confidence":0.80},
+    {"label":"L2 TLB","pages":64,"latency_ns":14.8377,"latency_cycles":55.1797,"confidence":0.80},
+    {"label":"Page Walk","pages":128,"latency_ns":10.5212,"latency_cycles":39.6055,"confidence":0.80},
+    {"label":"Page Walk","pages":256,"latency_ns":15.1074,"latency_cycles":56.5953,"confidence":0.99},
+    {"label":"Page Walk","pages":512,"latency_ns":21.5820,"latency_cycles":80.3721,"confidence":0.80},
+    {"label":"Page Walk","pages":1024,"latency_ns":20.7727,"latency_cycles":77.4887,"confidence":0.99},
+    {"label":"Page Walk","pages":2048,"latency_ns":25.3589,"latency_cycles":94.9243,"confidence":0.80}
+  ],
+  "pagefault": [
+    {"label":"Minor Page Fault","pages":64,"total_bytes":262144,"first_touch_ns":979.5382,"second_touch_ns":22.7202,"fault_overhead_ns":956.8180},
+    {"label":"Minor Page Fault","pages":256,"total_bytes":1048576,"first_touch_ns":473.4034,"second_touch_ns":12.0472,"fault_overhead_ns":461.3562},
+    {"label":"Minor Page Fault","pages":1024,"total_bytes":4194304,"first_touch_ns":461.5043,"second_touch_ns":10.8896,"fault_overhead_ns":450.6147},
+    {"label":"Minor Page Fault","pages":4096,"total_bytes":16777216,"first_touch_ns":457.3994,"second_touch_ns":10.4502,"fault_overhead_ns":446.9492},
+    {"label":"TLB Shootdown / Ping-Pong","pages":64,"total_bytes":524288,"first_touch_ns":18.2014,"second_touch_ns":19.6936,"fault_overhead_ns":0.0000},
+    {"label":"TLB Shootdown / Ping-Pong","pages":256,"total_bytes":2097152,"first_touch_ns":16.3341,"second_touch_ns":10.8880,"fault_overhead_ns":5.4461},
+    {"label":"TLB Shootdown / Ping-Pong","pages":1024,"total_bytes":8388608,"first_touch_ns":24.0522,"second_touch_ns":13.8181,"fault_overhead_ns":10.2341}
+  ],
+  "ctxswitch": [
+    {"label":"Context Switch (yield)","method":"yield","latency_ns":656.6337,"latency_cycles":2434.0270,"confidence":0.60}
+  ],
+  "cpuid_info": {
+    "codename": "Cascade Lake-W",
+    "technology_nm": 14,
+    "socket": "Socket 2066 LGA",
+    "family": 6,
+    "model": 85,
+    "stepping": 7,
+    "cpuid_level": "0x16",
+    "cpuid_ext_level": "0x80000008",
+    "smt_supported": true,
+    "base_freq_mhz": 0,
+    "max_freq_mhz": 0,
+    "bus_freq_mhz": 0,
+    "turbo_supported": false,
+    "max_non_turbo_ratio": 0,
+    "features": ["MMX", "SSE", "SSE2", "SSE3", "SSSE3", "SSE4.1", "SSE4.2", "EM64T", "AES", "AVX", "FMA3", "RDRAND", "BMI1", "BMI2", "AVX2", "AVX512F"],
+    "turbo_ratios": [],
+    "cache_details": [
+      {"level":1,"type":"Data","size_kb":32,"associativity":8,"line_size":64,"instances":10,"shared_by":2},
+      {"level":1,"type":"Instruction","size_kb":32,"associativity":8,"line_size":64,"instances":10,"shared_by":2},
+      {"level":2,"type":"Unified","size_kb":1024,"associativity":16,"line_size":64,"instances":10,"shared_by":2},
+      {"level":3,"type":"Unified","size_kb":19712,"associativity":11,"line_size":64,"instances":1,"shared_by":32}
+    ]
+  }},
+  "warnings": [
+    "Running inside a VM -- results may have extra jitter"
+  ]
+}
