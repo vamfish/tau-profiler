@@ -86,14 +86,62 @@ def find_engine() -> str:
         "./tau_profiler",
         str(Path(__file__).parent / "zig-out" / "bin" / "tau_profiler"),
     ]
+    # On Windows, prefer .exe version (avoid accidentally running Linux binary)
+    if sys.platform == "win32":
+        exe_candidates = [c + ".exe" for c in candidates]
+        candidates = exe_candidates + candidates
     for c in candidates:
         if os.path.exists(c):
             return c
-        # Also try with .exe on Windows
-        win_path = c + ".exe"
-        if os.path.exists(win_path):
-            return win_path
     return ""
+
+
+def run_engine_admin(engine_path: str) -> dict | None:
+    """Run engine with admin elevation on Windows. Returns data or None if failed."""
+    import tempfile
+    import subprocess as sp
+    import time
+
+    if sys.platform != "win32":
+        return None
+
+    tmp = tempfile.NamedTemporaryFile(suffix=".json", delete=False, mode="w")
+    tmp_path = tmp.name
+    tmp.close()
+
+    try:
+        # PowerShell Start-Process with RunAs for UAC elevation
+        # -Wait blocks until the elevated process finishes
+        ps_script = (
+            f'Start-Process -FilePath "{engine_path}"'
+            f' -Verb RunAs -Wait'
+            f' -RedirectStandardOutput "{tmp_path}"'
+        )
+        proc = sp.run(
+            ["powershell", "-NoProfile", "-Command", ps_script],
+            capture_output=True, text=True, timeout=300
+        )
+        # Return code from Start-Process: 0=success (sometimes non-zero is OK if the child succeeded)
+        # Check if output file exists and has content
+        time.sleep(0.5)
+        if not os.path.exists(tmp_path) or os.path.getsize(tmp_path) < 50:
+            print(f"Admin run: PowerShell rc={proc.returncode}, stderr={proc.stderr[:200]}")
+            return None
+
+        with open(tmp_path, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        start = text.find("{")
+        if start >= 0:
+            return json.loads(text[start:])
+        print(f"Admin run: no JSON found in output ({len(text)} bytes)")
+    except Exception as ex:
+        print(f"Admin run error: {ex}")
+    finally:
+        try:
+            os.unlink(tmp_path)
+        except OSError:
+            pass
+    return None
 
 
 def run_engine(engine_path: str, progress_cb=None) -> dict:
@@ -513,6 +561,10 @@ class TauProfilerGUI(QMainWindow):
         self.btn_run.setIconSize(QSize(16, 16))
         tb.addWidget(self.btn_run)
 
+        self.btn_run_admin = QPushButton("🔒 RUN (ADMIN)")
+        self.btn_run_admin.setToolTip("Run with Administrator privileges for MSR data\n(Linux: sudo; Windows: needs kernel driver)")
+        tb.addWidget(self.btn_run_admin)
+
         tb.addSeparator()
 
         self.btn_export_pdf = QPushButton("📄 EXPORT PDF")
@@ -844,6 +896,7 @@ class TauProfilerGUI(QMainWindow):
         self.btn_export_pdf_r.clicked.connect(lambda: self._export_report("pdf"))
         self.btn_export_html_r.clicked.connect(lambda: self._export_report("html"))
         self.btn_save_chart.clicked.connect(self._save_current_chart)
+        self.btn_run_admin.clicked.connect(self._run_benchmark_admin)
 
     # ── Run Benchmark ────────────────────────────────────────────
 
@@ -863,6 +916,45 @@ class TauProfilerGUI(QMainWindow):
         self.runner.finished.connect(self._on_data)
         self.runner.error.connect(self._on_error)
         self.runner.start()
+
+    def _run_benchmark_admin(self):
+        """Run benchmark with Administrator privileges for MSR access."""
+        if not self.engine_path:
+            QMessageBox.warning(self, "Engine Not Found", "Build first: zig build")
+            return
+
+        if sys.platform != "win32":
+            QMessageBox.information(self, "Admin Mode", "On Linux/macOS, use: sudo python tau_gui.py")
+            return
+
+        self._set_busy(True)
+        self.lbl_status.setText("⏳ Waiting for admin elevation...")
+        self.progress.show()
+
+        # Run elevated engine in background via shell
+        data = run_engine_admin(self.engine_path)
+        if data is None:
+            self._set_busy(False)
+            self.lbl_status.setText("⚠ Admin run cancelled or failed")
+            return
+
+        # Merge MSR data if we already have non-admin data
+        if self.data and "msr_info" in data:
+            self.data["msr_info"] = data["msr_info"]
+            self._populate_cpuinfo(self.data)
+            self.lbl_status.setText(f"✅ MSR data loaded — {datetime.now():%H:%M:%S}")
+        elif data:
+            self.data = data
+            self._populate_dashboard(data)
+            self._populate_cpuinfo(data)
+            self._populate_cache(data)
+            self._populate_tlb(data)
+            self._populate_pagefault(data)
+            self._populate_ctxswitch(data)
+            self._populate_report(data)
+            self.lbl_status.setText(f"✅ Done (Admin) — {datetime.now():%H:%M:%S}")
+        self._set_busy(False)
+        self.tabs.setCurrentIndex(1)  # Switch to CPU INFO tab
 
     def _on_data(self, data: dict):
         self.data = data
@@ -1095,10 +1187,43 @@ class TauProfilerGUI(QMainWindow):
         else:
             self.ci_freq_labels["Per-Core Turbo Ratios"].setText("  (MSR needed)")
 
-        # ── Virtualization ──
-        self.ci_virt_labels["Hypervisor"].setText(f"  {plat.get('virtualized_under', 'none')}")
-        self.ci_virt_labels["VM Status"].setText(
-            "  Running in VM" if plat.get("is_virtualized") else "  Bare metal")
+        # ── MSR info (admin-only) ──
+        msr = data.get("msr_info")
+        if msr:
+            # Update frequency with MSR turbo data
+            ratios_1c = msr.get("turbo_ratios_1c", [])
+            if ratios_1c and any(r > 0 for r in ratios_1c):
+                ratio_str = ", ".join(f"{r/10:.1f}x" if r > 9 else f"{r}x" for r in ratios_1c if r > 0)
+                if ratio_str:
+                    self.ci_freq_labels["Per-Core Turbo Ratios"].setText(
+                        f"  {ratio_str} (MSR 1-core turbo)")
+
+            if msr.get("max_non_turbo_ratio", 0) > 0:
+                self.ci_freq_labels["Max Non-Turbo Ratio"].setText(f"  {msr['max_non_turbo_ratio']}x (MSR)")
+
+            # Update virtualization to show MSR power/thermal
+            pl1 = msr.get("pl1_power_w", 0)
+            pl2 = msr.get("pl2_power_w", 0)
+            tjmax = msr.get("tjmax_c", 0)
+            microcode = msr.get("microcode_rev", 0)
+
+            msr_lines = []
+            if pl1 > 0:
+                msr_lines.append(f"PL1={pl1:.1f}W, PL2={pl2:.1f}W")
+            if tjmax > 0:
+                msr_lines.append(f"TjMax={tjmax}°C")
+            if microcode > 0:
+                msr_lines.append(f"µCode=0x{microcode:X}")
+            self.ci_virt_labels["VM Status"].setText(
+                "  Bare metal" if not plat.get("is_virtualized") else "  Running in VM")
+            if msr_lines:
+                self.ci_virt_labels["Hypervisor"].setText(
+                    f"  {plat.get('virtualized_under', 'none')}  |  {'  |  '.join(msr_lines)}")
+        else:
+            self.ci_freq_labels["Per-Core Turbo Ratios"].setText("  (MSR: needs kernel driver on Windows)")
+            if sys.platform == "win32":
+                self.ci_virt_labels["Hypervisor"].setText(
+                    f"  {plat.get('virtualized_under', 'none')}  |  MSR blocked by Windows (kernel driver needed)")
 
     # ── Cache Charts ──────────────────────────────────────────────
 

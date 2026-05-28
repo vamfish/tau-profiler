@@ -8,6 +8,7 @@ const tlb = @import("tlb.zig");
 const pagefault = @import("pagefault.zig");
 const ctxswitch = @import("ctxswitch.zig");
 const cpuid_info = @import("cpuid_info.zig");
+const msr_mod = @import("msr.zig");
 
 const Timer = timer_mod.Timer;
 
@@ -25,6 +26,7 @@ fn writeJson(
     ctx_results: []const ctxswitch.CtxSwitchResult,
     warnings: []const []const u8,
     cpuid_data: ?cpuid_info.CpuidInfo,
+    msr_info: ?msr_mod.MsrInfo,
 ) void {
     const out_file = std.Io.File.stdout();
     var buf: [131072]u8 = undefined;
@@ -191,6 +193,30 @@ fn writeJson(
         }
         w.writeAll("    ]\n") catch return;
         w.writeAll("  }") catch return;
+    }
+
+    // ── MSR info ──
+    if (msr_info) |mi| {
+        w.print(",\n  \"msr_info\": {{\n", .{}) catch return;
+        w.print("    \"max_non_turbo_ratio\": {},\n", .{mi.max_non_turbo_ratio}) catch return;
+        w.print("    \"pl1_power_w\": {d:.1},\n", .{mi.pl1_power_w}) catch return;
+        w.print("    \"pl2_power_w\": {d:.1},\n", .{mi.pl2_power_w}) catch return;
+        w.print("    \"pl1_time_s\": {d:.1},\n", .{mi.pl1_time_s}) catch return;
+        w.print("    \"tjmax_c\": {},\n", .{mi.tjmax_c}) catch return;
+        w.print("    \"microcode_rev\": {},\n", .{mi.microcode_rev}) catch return;
+        w.writeAll("    \"turbo_ratios_1c\": [") catch return;
+        for (mi.turbo_ratios_1c[0..8], 0..) |r, j| {
+            if (j > 0) w.writeAll(", ") catch return;
+            w.print("{}", .{r}) catch return;
+        }
+        w.print("],\n", .{}) catch return;
+        w.writeAll("    \"turbo_ratios_per_core\": [") catch return;
+        for (mi.turbo_ratios_per_core[0..10], 0..) |r, j| {
+            if (j > 0) w.writeAll(", ") catch return;
+            w.print("{}", .{r}) catch return;
+        }
+        w.print("]\n", .{}) catch return;
+        w.writeAll("  }}") catch return;
     }
 
     // ── Warnings ──
@@ -369,7 +395,21 @@ pub fn main(init: std.process.Init) !void {
     if (cpuid_data) |*cd| {
         cd.tsc_hz = @as(u64, @intFromFloat(timer.tsc_hz));
     }
-    writeJson(io, info, &timer, cache_results, tlb_results, pf_results, ctx_results, warnings.items, cpuid_data);
+    // ── MSR info (requires admin on Windows) ──
+    var msr_reader = msr_mod.MsrReader.init();
+    defer msr_reader.deinit();
+    var msr_info: ?msr_mod.MsrInfo = null;
+    if (msr_reader.available()) {
+        msr_info = msr_mod.readMsrInfo(&msr_reader) catch null;
+        if (msr_info != null) {
+            std.debug.print("  MSR: Turbo/Power info read successfully\n", .{});
+        } else {
+            std.debug.print("  MSR: Available but read failed (try admin?)\n", .{});
+        }
+    } else if (builtin.os.tag == .windows) {
+        std.debug.print("  MSR: Not available (requires Administrator privileges)\n", .{});
+    }
+    writeJson(io, info, &timer, cache_results, tlb_results, pf_results, ctx_results, warnings.items, cpuid_data, msr_info);
 }
 
 test "platform detection smoke test" {

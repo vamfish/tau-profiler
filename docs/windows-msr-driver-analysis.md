@@ -6,285 +6,338 @@
 
 ---
 
-## 方案对比
+## 实测结果
 
-| 方案 | 复杂度 | 工具依赖 | 安全性 | 推荐 |
-|------|--------|----------|--------|------|
-| **A: 纯 Zig WDM 驱动** | 极高 | WDK + Zig | 完全自控 | 不推荐 |
-| **B: WDM 驱动 C+Zig 混合** | 高 | WDK + VS + Zig | 完全自控 | 可行 |
-| **C: NtSystemDebugControl** | 低 | 无 | 完全自控 | **最推荐** |
-| **D: `\\.\Msr` 内置设备** | 低 | 无 | 完全自控 | 可行 |
-| **E: Minifilter/KMDF** | 中 | WDK + VS | 完全自控 | 可行但过重 |
-
----
-
-## 方案 C: NtSystemDebugControl（最推荐，零依赖）
-
-Windows 内核导出了一个"调试"函数，可以在用户态通过 `ntdll.dll` 调用直接读写 MSR。
-
-### 原理
-
-```c
-// ntdll.dll 导出的系统调用
-NTSTATUS NtSystemDebugControl(
-    SysDbgReadMsr,           // 操作码: 16 = 读 MSR
-    &msr_addr,               // 输入: MSR 地址
-    sizeof(msr_addr),
-    &msr_value,              // 输出: MSR 值
-    sizeof(msr_value),
-    NULL
-);
-```
-
-### 前提条件
-
-1. **管理员权限**（必须）
-2. **SeDebugPrivilege** 特权（代码可自动激活）
-3. Windows 10/11 均可用（虽然文档标注 deprecated，实测可用）
-
-### Zig 实现（~60 行代码）
-
-```zig
-const std = @import("std");
-const windows = std.os.windows;
-
-// ntdll 函数声明
-extern "ntdll" fn NtSystemDebugControl(
-    command: u32,
-    input: ?*anyopaque,
-    input_len: u32,
-    output: ?*anyopaque,
-    output_len: u32,
-    ret_len: ?*u32,
-) callconv(windows.WINAPI) i32;
-
-const SysDbgReadMsr: u32 = 16;
-const SysDbgWriteMsr: u32 = 17;
-
-pub fn readMsr(msr_addr: u32) !u64 {
-    var value: u64 = 0;
-    const status = NtSystemDebugControl(
-        SysDbgReadMsr,
-        @constCast(@ptrCast(&msr_addr)),
-        @sizeOf(u32),
-        @ptrCast(&value),
-        @sizeOf(u64),
-        null,
-    );
-    if (status < 0) return error.MsrReadFailed;
-    return value;
-}
-```
-
-### 优点
-- **零依赖**：只调用 Windows 自带的 ntdll.dll
-- **纯 Zig**：~60 行代码，不需要任何外部工具
-- **无需编译驱动**：直接用户态调用
-- **无需签名**：不是驱动，没有签名问题
-- **Linux 对应**：Linux 上已有更简单的 `/dev/cpu/N/msr`
-
-### 缺点
-- 微软将此 API 标记为 deprecated（但不影响 Win10/11 使用）
-- 未来 Windows 版本可能移除
-- 需要管理员权限运行
-
-### 风险
-- API 可能在未来版本被移除（概率低）
-- 部分杀毒软件可能标记为可疑行为
+| 方案 | 状态 | 说明 |
+|------|------|------|
+| **C: NtSystemDebugControl** | ❌ 已否决 | `0xC0000354` STATUS_DEBUGGER_INACTIVE。Win10/11 要求内核调试器活跃 |
+| **D: `\\.\Msr` 内置** | ❌ | 驱动不存在于标准 Windows 安装 |
+| **B: C WDM 驱动** | ✅ 可行 | ~200 行 C，最成熟的路径 |
+| **Rust WDM/KMDF 驱动** | ✅ 推荐 | Microsoft 官方支持，2025 年日趋成熟 |
 
 ---
 
-## 方案 D: `\\.\Msr` 内置设备（零依赖）
+## Rust WDM/KMDF 驱动方案（推荐）
 
-Windows 内核内置了一个 MSR 驱动，可通过以下方式启用：
+### 2025 年生态现状
+
+Microsoft 已发布 [windows-drivers-rs](https://github.com/microsoft/windows-drivers-rs) 项目，将 Rust 作为 Windows 驱动开发的一等公民语言。
+
+#### 可用的官方 Crates
+
+| Crate | 用途 |
+|-------|------|
+| `wdk` | 安全、惯用的 WDK API 绑定 |
+| `wdk-sys` | 原始 FFI 绑定（`bindgen` 生成），包含 `__readmsr()` |
+| `wdk-build` | 构建配置、绑定生成、编译器/链接器标志 |
+| `wdk-alloc` | 内核模式 `GlobalAlloc` 实现（`ExAllocatePool2`） |
+| `wdk-panic` | 内核模式 panic 处理器 |
+| `wdk-macros` | 过程宏，简化 WDK 交互 |
+
+#### 驱动模型支持
+
+| 模型 | 模式 | wdk-alloc/pagic 需要？ |
+|------|------|----------------------|
+| WDM | 内核 | ✅ |
+| KMDF | 内核 | ✅ |
+| UMDF | 用户 | ❌ |
+
+### 构建环境要求
 
 ```powershell
-# 以管理员运行，安装 MSR 驱动（此驱动名为 "Msr" 但需要手动注册）
-sc create msr type= kernel start= demand binPath= "C:\Windows\System32\drivers\msr.sys"
-sc start msr
+# 1. eWDK (Enterprise WDK) — Windows 驱动开发环境
+#    下载: https://learn.microsoft.com/en-us/windows-hardware/drivers/download-the-wdk
+#    推荐使用 eWDK (无需完整 VS) 或带 WDK 的 Visual Studio 2022
+
+# 2. LLVM 17 (bindgen 依赖)
+winget install -i LLVM.LLVM --version 17.0.6 --force
+
+# 3. cargo-make (构建工具)
+cargo install --locked cargo-make --no-default-features --features tls-native
+
+# 4. Rust nightly (内核驱动需要 nightly)
+rustup toolchain install nightly
+rustup default nightly
 ```
 
-但 `msr.sys` 可能不存在于某些 Windows 版本上。可用性不确定。
+### TauMsr.sys — Rust 版 MSR 驱动（~150 行）
 
----
+```rust
+// tau_msr.rs — Minimal WDM kernel driver for MSR access
+#![no_std]
+extern crate wdk_panic;
+extern crate wdk_alloc;
 
-## 方案 B: WDM 驱动 C+Zig 混合（如需完整驱动能力）
+use wdk_alloc::WdkAllocator;
 
-### 所需工具
+#[global_allocator]
+static GLOBAL_ALLOCATOR: WdkAllocator = WdkAllocator;
 
-| 工具 | 用途 | 获取方式 |
-|------|------|----------|
-| **Visual Studio 2022 Community** | C 编译器 + 构建系统 | 免费，[visualstudio.microsoft.com](https://visualstudio.microsoft.com) |
-| **Windows Driver Kit (WDK)** | 内核头文件、库、驱动程序模板 | VS Installer → 勾选 "Windows Driver Kit" |
-| **Windows SDK** | 基础 Windows 头文件 | VS Installer 自带 |
-| **Zig** | 已有 | 已安装 0.17.0-dev |
-| **测试签名证书** | 驱动签名（开发阶段的测试签名） | 系统自带 `makecert` 命令 |
+use wdk_sys::*;
+use core::mem;
 
-### 驱动架构
+// IOCTL code: CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
+const IOCTL_READ_MSR: u32 = 0x80002000;
 
-```
-tau_profiler.exe (用户态)
-    ↓ CreateFile("\\\\.\\TauMsr")
-    ↓ DeviceIoControl(IOCTL_READ_MSR, &msr_addr, ...)
-
-tau_msr.sys (内核态 WDM 驱动)
-    ↓ DriverEntry()
-    ↓ IoCreateDevice("\\Device\\TauMsr")
-    ↓ IRP_MJ_DEVICE_CONTROL → 处理 IOCTL
-    ↓ __readmsr(msr_addr) → 返回 MSR 值
-```
-
-### 最小驱动 C 代码（~200 行）
-
-```c
-// tau_msr.c — 最小 WDM 驱动，只读 MSR
-#include <ntddk.h>
-
-#define IOCTL_READ_MSR  CTL_CODE(FILE_DEVICE_UNKNOWN, 0x800, METHOD_BUFFERED, FILE_ANY_ACCESS)
-
-typedef struct { ULONG msr_addr; ULONG64 msr_value; } MSR_REQUEST;
-
-DRIVER_INITIALIZE DriverEntry;
-DRIVER_UNLOAD TauMsrUnload;
-DRIVER_DISPATCH TauMsrCreateClose;
-DRIVER_DISPATCH TauMsrDeviceControl;
-
-NTSTATUS DriverEntry(PDRIVER_OBJECT drv, PUNICODE_STRING reg) {
-    UNICODE_STRING dev_name = RTL_CONSTANT_STRING(L"\\Device\\TauMsr");
-    UNICODE_STRING sym_link = RTL_CONSTANT_STRING(L"\\DosDevices\\TauMsr");
-    PDEVICE_OBJECT dev = NULL;
-
-    IoCreateDevice(drv, 0, &dev_name, FILE_DEVICE_UNKNOWN, 0, FALSE, &dev);
-    IoCreateSymbolicLink(&sym_link, &dev_name);
-
-    drv->DriverUnload = TauMsrUnload;
-    drv->MajorFunction[IRP_MJ_CREATE] = TauMsrCreateClose;
-    drv->MajorFunction[IRP_MJ_CLOSE] = TauMsrCreateClose;
-    drv->MajorFunction[IRP_MJ_DEVICE_CONTROL] = TauMsrDeviceControl;
-    return STATUS_SUCCESS;
+#[repr(C)]
+struct MsrRequest {
+    msr_addr: u32,
+    msr_value: u64,
 }
 
-void TauMsrUnload(PDRIVER_OBJECT drv) {
-    UNICODE_STRING sym = RTL_CONSTANT_STRING(L"\\DosDevices\\TauMsr");
-    IoDeleteSymbolicLink(&sym);
-    IoDeleteDevice(drv->DeviceObject);
-}
+/// Mark function as DriverEntry export
+#[unsafe(export_name = "DriverEntry")]
+pub extern "system" fn driver_entry(
+    driver: *mut DRIVER_OBJECT,
+    _registry_path: *const UNICODE_STRING,
+) -> NTSTATUS {
+    unsafe {
+        // Create device
+        let mut dev_name = wdk_sys::RTL_CONSTANT_STRING!("\\Device\\TauMsr");
+        let mut symlink = wdk_sys::RTL_CONSTANT_STRING!("\\DosDevices\\TauMsr");
+        let mut device: *mut DEVICE_OBJECT = core::ptr::null_mut();
 
-NTSTATUS TauMsrCreateClose(PDEVICE_OBJECT dev, PIRP irp) {
-    irp->IoStatus.Status = STATUS_SUCCESS;
-    IoCompleteRequest(irp, IO_NO_INCREMENT);
-    return STATUS_SUCCESS;
-}
+        IoCreateDevice(driver, 0, &mut dev_name, FILE_DEVICE_UNKNOWN, 0, FALSE, &mut device);
+        IoCreateSymbolicLink(&mut symlink, &mut dev_name);
 
-NTSTATUS TauMsrDeviceControl(PDEVICE_OBJECT dev, PIRP irp) {
-    PIO_STACK_LOCATION stack = IoGetCurrentIrpStackLocation(irp);
-    if (stack->Parameters.DeviceIoControl.IoControlCode == IOCTL_READ_MSR) {
-        MSR_REQUEST* req = (MSR_REQUEST*)irp->AssociatedIrp.SystemBuffer;
-        req->msr_value = __readmsr(req->msr_addr);
-        irp->IoStatus.Information = sizeof(MSR_REQUEST);
-        irp->IoStatus.Status = STATUS_SUCCESS;
+        // Set dispatch functions
+        let driver_ref = &mut *driver;
+        driver_ref.DriverUnload = Some(driver_unload);
+        driver_ref.MajorFunction[IRP_MJ_CREATE as usize] = Some(create_close);
+        driver_ref.MajorFunction[IRP_MJ_CLOSE as usize] = Some(create_close);
+        driver_ref.MajorFunction[IRP_MJ_DEVICE_CONTROL as usize] = Some(device_control);
+
+        STATUS_SUCCESS
     }
-    IoCompleteRequest(irp, IO_NO_INCREMENT);
-    return irp->IoStatus.Status;
 }
+
+unsafe extern "system" fn driver_unload(driver: *mut DRIVER_OBJECT) {
+    unsafe {
+        let mut sym = wdk_sys::RTL_CONSTANT_STRING!("\\DosDevices\\TauMsr");
+        IoDeleteSymbolicLink(&mut sym);
+        IoDeleteDevice((*driver).DeviceObject);
+    }
+}
+
+unsafe extern "system" fn create_close(
+    _device: *mut DEVICE_OBJECT,
+    irp: *mut IRP,
+) -> NTSTATUS {
+    unsafe {
+        let irp_ref = &mut *irp;
+        irp_ref.IoStatus.Information = 0;
+        irp_ref.IoStatus.__bindgen_anon_1.Status = STATUS_SUCCESS;
+        IoCompleteRequest(irp, IO_NO_INCREMENT);
+        STATUS_SUCCESS
+    }
+}
+
+unsafe extern "system" fn device_control(
+    _device: *mut DEVICE_OBJECT,
+    irp: *mut IRP,
+) -> NTSTATUS {
+    unsafe {
+        let irp_ref = &mut *irp;
+        let stack = IoGetCurrentIrpStackLocation(irp);
+        let ioctl = (*stack).Parameters.DeviceIoControl.IoControlCode;
+
+        if ioctl == IOCTL_READ_MSR {
+            let req = &mut *(irp_ref.AssociatedIrp.SystemBuffer as *mut MsrRequest);
+            let addr: u32 = req.msr_addr;
+
+            // Core: read MSR via kernel-mode intrinsic
+            let value: u64;
+            core::arch::asm!(
+                "rdmsr",
+                in("ecx") addr,
+                out("eax") value as u32,
+                out("edx") (value >> 32) as u32,
+            );
+            req.msr_value = value;
+
+            irp_ref.IoStatus.Information = mem::size_of::<MsrRequest>() as u32;
+            irp_ref.IoStatus.__bindgen_anon_1.Status = STATUS_SUCCESS;
+        } else {
+            irp_ref.IoStatus.__bindgen_anon_1.Status = STATUS_INVALID_DEVICE_REQUEST;
+        }
+
+        IoCompleteRequest(irp, IO_NO_INCREMENT);
+        irp_ref.IoStatus.__bindgen_anon_1.Status
+    }
+}
+```
+
+### Rust 驱动的 Cargo.toml
+
+```toml
+[package]
+name = "tau_msr"
+version = "0.1.0"
+edition = "2024"
+
+[lib]
+crate-type = ["cdylib"]
+
+[dependencies]
+wdk = "0.2"
+wdk-sys = "0.2"
+wdk-alloc = "0.2"
+wdk-panic = "0.2"
+
+[build-dependencies]
+wdk-build = "0.2"
+
+[package.metadata.wdk.driver-model]
+driver-type = "WDM"
+
+[profile.dev]
+panic = "abort"
+
+[profile.release]
+panic = "abort"
 ```
 
 ### 构建命令
 
 ```powershell
-# 编译驱动
-cl /c /GS- /Gs- /kernel /Zi /I"C:\Program Files (x86)\Windows Kits\10\Include\10.0.22621.0\km" tau_msr.c
-link /DRIVER /SUBSYSTEM:NATIVE /OUT:tau_msr.sys tau_msr.obj ntoskrnl.lib
-
-# 启用测试签名模式（管理员 PowerShell，需要重启）
-bcdedit /set testsigning on
-
-# 创建自签名证书
-makecert -r -pe -ss PrivateCertStore -n "CN=TauProfiler" tau_msr.cer
-signtool sign /v /s PrivateCertStore /n "TauProfiler" tau_msr.sys
-
-# 安装驱动
-sc create tau_msr type= kernel start= demand binPath= "C:\full\path\to\tau_msr.sys"
-sc start tau_msr
+# 从 eWDK 环境运行
+cd tau_msr_driver
+cargo make
+# 输出: target/release/package/tau_msr.sys (已签名)
 ```
 
-### 缺点
-- 需要安装 Visual Studio + WDK（~8GB 下载）
-- 需要测试签名（每次重启按 F8 选择 "Disable Driver Signature Enforcement" 或永久开启 testsigning）
-- 开发周期：驱动崩溃 = 蓝屏
-- 不适合分发给普通用户
+### 安装和测试
+
+```powershell
+# 启用测试签名模式（需重启一次）
+bcdedit /set testsigning on
+
+# 安装驱动
+sc create tau_msr type= kernel start= demand binPath= "C:\...\tau_msr.sys"
+sc start tau_msr
+
+# 用户态调用（Zig / Python / C / Rust 均可）
+# CreateFile("\\\\.\\TauMsr") → DeviceIoControl(IOCTL_READ_MSR)
+```
+
+### 用户态调用（集成到 tau_profiler）
+
+```zig
+// Zig 端调用 Rust 驱动
+extern "kernel32" fn CreateFileA(
+    lpFileName: [*:0]const u8,
+    dwDesiredAccess: u32,
+    dwShareMode: u32,
+    lpSecurityAttributes: ?*anyopaque,
+    dwCreationDisposition: u32,
+    dwFlagsAndAttributes: u32,
+    hTemplateFile: ?*anyopaque,
+) callconv(.c) *anyopaque;
+
+extern "kernel32" fn DeviceIoControl(
+    hDevice: *anyopaque,
+    dwIoControlCode: u32,
+    lpInBuffer: ?*anyopaque,
+    nInBufferSize: u32,
+    lpOutBuffer: ?*anyopaque,
+    nOutBufferSize: u32,
+    lpBytesReturned: ?*u32,
+    lpOverlapped: ?*anyopaque,
+) callconv(.c) i32;
+
+const IOCTL_READ_MSR: u32 = 0x80002000;
+const MsrRequest = extern struct { msr_addr: u32, msr_value: u64 };
+
+pub fn readMsrViaDriver(addr: u32) !u64 {
+    const path = "\\\\.\\TauMsr";
+    const h = CreateFileA(path, 0xC0000000, 3, null, 3, 0x80, null);
+    defer _ = CloseHandle(h);
+
+    var req = MsrRequest{ .msr_addr = addr, .msr_value = 0 };
+    const ok = DeviceIoControl(h, IOCTL_READ_MSR,
+        @ptrCast(&req), @sizeOf(MsrRequest),
+        @ptrCast(&req), @sizeOf(MsrRequest), null, null);
+    if (ok == 0) return error.MsrDriverFailed;
+    return req.msr_value;
+}
+```
+
+### 优缺点
+
+| 优点 | 缺点 |
+|------|------|
+| Microsoft 官方支持，2025 年日趋成熟 | 需要 nightly Rust + eWDK（~4GB 下载） |
+| 内存安全（Rust 的所有权模型） | 驱动签名需要 testsigning 模式 |
+| 内核态直接 `rdmsr` 指令，无任何限制 | 驱动崩溃 = 蓝屏（开发期间） |
+| 用户态只需 `CreateFile` + `DeviceIoControl` | 不适合分发给非技术用户 |
+| crates.io 已有预编译版本 | 项目仍标注为早期阶段（但可用） |
 
 ---
 
 ## 方案 A: 纯 Zig WDM 驱动（理论上可行，但不推荐）
 
-Zig 支持 `x86_64-windows-kernel` 目标，但：
-- Zig 标准库不可用（`std` 在 kernel 模式 99% 不兼容）
-- 需要手动定义所有 NT 内核类型（`PDRIVER_OBJECT`, `PIRP`, `IO_STACK_LOCATION` 等）
-- 需要手动链接 `ntoskrnl.lib`
-- 调试困难（kernel debugger 不支持 Zig 符号）
-- 文档几乎为零
+Zig 支持 `x86_64-windows-kernel` 目标，但标准库不可用，需手动定义所有 NT 内核类型，调试几乎不可能。**不推荐**。
 
-**不推荐**，除非你想做前沿探索。
+---
+
+## 方案 B: WDM 驱动 C（备选）
+C WDM 驱动是最成熟的方案，~200 行 C 代码，但需要 VS 2022 + WDK（~8GB）。详见上文原 C 驱动部分。
 
 ---
 
 ## 结论：推荐实施路径
 
-### 第一步：立即实施方案 C（NtSystemDebugControl）
+### 第一步（Windows）：Rust WDM 驱动
 
-```zig
-// 在 src/msr.zig 中实现
-// 用户运行 tau_profiler.exe --msr（需要管理员）
-// 单次调用即可读取 0x1AD、0xCE、0x198 等所有关键 MSR
+```
+tau_msr.sys (Rust 内核驱动) ← 读取 MSR 的内核端
+    ↑ IOCTL via DeviceIoControl
+tau_profiler.exe (Zig 用户态) ← 调用驱动读取 MSR
 ```
 
-**优点**：今天就能实现，零外部依赖，纯 Zig 用户态代码。
+用 Rust 写最小 WDM 驱动（~150 行），通过 `rdmsr` 指令直接读 MSR。用户态 Zig 引擎通过 `CreateFile("\\\\.\\TauMsr")` + `DeviceIoControl` 调用。
 
-### 第二步（可选）：如需完整 MSR 访问 + 分发
+### 第二步（Linux）：直接使用 /dev/cpu/*/msr
 
-- 编写方案 B 的最小 WDM C 驱动（~200 行）
-- 编译为 `tau_msr.sys`
-- Zig 引擎检测驱动是否存在，存在则通过 DeviceIoControl 读取
-- 提供给高级用户手动安装
+已经实现（`src/msr.zig` 中 `LinuxMsr`）。需 `sudo modprobe msr`。
 
-### 第三步（Linux）：直接使用 /dev/cpu/*/msr
+### 第三步（可选）：Zig 引擎自动检测驱动
 
-- `open("/dev/cpu/0/msr", .{})` → `pread(fd, buf, msr_addr)`
-- 需要 `sudo modprobe msr` 加载 msr 模块
-- 纯 Zig，~20 行代码
+```zig
+// 自动选择最优 MSR 访问方式
+pub fn init() MsrReader {
+    if (builtin.os.tag == .windows) {
+        if (driverAvailable()) return DriverMsr{};  // Rust 驱动
+        return .none;  // 提示用户安装驱动
+    }
+    if (builtin.os.tag == .linux) {
+        return LinuxMsr{};  // /dev/cpu/N/msr
+    }
+    return .none;
+}
+```
 
 ---
 
-## 方案 C 在 tau_profiler 中的集成设计
+## 总结
 
-```zig
-// src/msr.zig
+| 方案 | 语言 | 复杂度 | 状态 | 推荐场景 |
+|------|------|--------|------|----------|
+| **Rust WDM** | Rust | 中 | 官方支持，2025 年可用 | **Windows MSR 首选** |
+| C WDM | C | 中 | 最成熟 | 备选 |
+| `/dev/cpu/msr` | — | 低 | Linux 原生 | Linux 首选 |
+| NtSystemDebugControl | — | 低 | ❌ Win10/11 已封禁 | 不再推荐 |
+| 纯 Zig 驱动 | Zig | 极高 | 理论可行 | 不推荐 |
 
-pub const MsrReader = union(enum) {
-    ntsd: NtSystemDebug,       // Windows: ntdll API
-    dev_msr: DevMsr,           // Linux: /dev/cpu/N/msr
-    none,                       // 不可用（无 admin 或权限不足）
+### 参考链接
 
-    pub fn init() MsrReader { ... }    // 自动检测可用方法
-    pub fn read(self: *MsrReader, addr: u32) !u64 { ... }
-    pub fn deinit(self: *MsrReader) void { ... }
-};
+- [microsoft/windows-drivers-rs](https://github.com/microsoft/windows-drivers-rs) — Microsoft 官方 Rust 驱动框架
+- [microsoft/Windows-rust-driver-samples](https://github.com/microsoft/Windows-rust-driver-samples) — 完整驱动示例
+- [The Register: Microsoft shows slow progress on Rust for Windows drivers (2025-09)](https://www.theregister.com/software/2025/09/04/microsoft-shows-slow-progress-on-rust-for-windows-drivers/)
+- [DeepWiki: windows-drivers-rs Architecture](https://deepwiki.com/microsoft/windows-drivers-rs/2-architecture)
 
-// 调用示例
-var msr = MsrReader.init();
-defer msr.deinit();
-const turbo = msr.read(0x1AD) catch null;
-const power = msr.read(0x610) catch null;
-const temp = msr.read(0x19C) catch null;
-```
-
-使用方式：
-
-```powershell
-# Windows（需要管理员权限）
-tau_profiler.exe --msr
-
-# Linux（需要 msr 模块 + sudo）
-sudo tau_profiler --msr
-```
+Sources:
+- [microsoft/windows-drivers-rs](https://github.com/microsoft/windows-drivers-rs)
+- [DeepWiki: windows-drivers-rs Core Components](https://deepwiki.com/microsoft/windows-drivers-rs/2.1-core-components)
+- [The Register: Rust Windows drivers](https://www.theregister.com/software/2025/09/04/microsoft-shows-slow-progress-on-rust-for-windows-drivers/861876?td=keepreading)
+- [TechSpot: Microsoft turning Rust first-class for Windows drivers](https://www.techspot.com/news/109351-microsoft-turning-rust-first-class-language-developing-secure.html)

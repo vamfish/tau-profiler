@@ -1,0 +1,11 @@
+{
+  "permissions": {
+    "allow": [
+      "Bash(pwsh -Command \"& 'C:\\\\portable\\\\zig-x86_64-windows-0.17.0-dev\\\\zig.exe' build -Doptimize=ReleaseFast 2>&1 | Select-String 'error:' | Select-Object -First 5\")",
+      "Bash(pwsh -Command \"& 'C:\\\\portable\\\\zig-x86_64-windows-0.17.0-dev\\\\zig.exe' build -Doptimize=ReleaseFast 2>&1 | Select-String 'error:|Build Summary' | Select-Object -First 5\")",
+      "WebSearch",
+      "WebFetch(domain:deepwiki.com)",
+      "WebFetch(domain:github.com)"
+    ]
+  }
+}

@@ -6,6 +6,7 @@ pub const tlb = @import("tlb.zig");
 pub const pagefault = @import("pagefault.zig");
 pub const ctxswitch = @import("ctxswitch.zig");
 pub const cpuid_info = @import("cpuid_info.zig");
+pub const msr = @import("msr.zig");
 
 test {
     _ = platform;
@@ -16,4 +17,5 @@ test {
     _ = pagefault;
     _ = ctxswitch;
     _ = cpuid_info;
+    _ = msr;
 }
