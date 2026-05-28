@@ -7,12 +7,12 @@ const std = @import("std");
 // build runner to parallelize the build automatically (and the cache system to
 // know when a step doesn't need to be re-run).
 pub fn build(b: *std.Build) void {
-    // Default: native CPU. For portable binaries that don't use AVX-512
-    // (e.g. for Intel 12th-gen+), build with: zig build -Dtarget=x86_64-windows
+    // Default target: native CPU (fastest for local use).
+    // For PORTABLE binaries (max CPU compatibility):
+    //   zig build -Dtarget=x86_64-windows -Dcpu=x86_64_v3 -Doptimize=ReleaseFast
+    // x86_64_v3 = Haswell-level (AVX2, no AVX-512). Works on Intel 2013+ / AMD 2015+.
+    // For max compatibility (slower): use -Dcpu=baseline instead of x86_64_v3.
     const target = b.standardTargetOptions(.{});
-    // Standard optimization options allow the person running `zig build` to select
-    // between Debug, ReleaseSafe, ReleaseFast, and ReleaseSmall. Here we do not
-    // set a preferred release mode, allowing the user to decide how to optimize.
     const optimize = b.standardOptimizeOption(.{});
     // It's also possible to define more custom flags to toggle optional features
     // of this build script using `b.option()`. All defined flags (including

@@ -46,8 +46,30 @@ uv run python tau_gui.py
 If you want to modify the engine, you'll need **Zig ≥ 0.17.0-dev**:
 
 ```bash
+# Fast native build (optimized for YOUR CPU)
 zig build -Doptimize=ReleaseFast
+
+# Portable build (works on most CPUs, no AVX-512)
+zig build -Dtarget=x86_64-windows -Dcpu=x86_64_v3 -Doptimize=ReleaseFast
+
+# Maximum compatibility (slow, works on ANY x86-64 CPU since 2003)
+zig build -Dtarget=x86_64-windows -Dcpu=baseline -Doptimize=ReleaseFast
+
+# Cross-compile for Linux/macOS (from Windows)
+zig build -Dtarget=x86_64-linux-gnu -Dcpu=x86_64_v3 -Doptimize=ReleaseFast
+zig build -Dtarget=x86_64-macos -Dcpu=x86_64_v3 -Doptimize=ReleaseFast
+
+# Build all portable binaries
+pwsh scripts/build-portable.ps1
 ```
+
+> **CPU compatibility levels:**
+> | Level | Feature set | Works on | Performance |
+> |-------|------------|----------|-------------|
+> | `native` | All features of your CPU | Build machine only | Fastest |
+> | `x86_64_v3` | AVX2, BMI, FMA | Intel Haswell+ (2013), AMD Excavator+ (2015) | Good |
+> | `x86_64_v2` | SSE4.2, POPCNT | Intel Nehalem+ (2008), AMD Barcelona+ (2007) | OK |
+> | `baseline` | Basic x86-64 | Any x86-64 CPU | Slowest |
 
 > ⚠️ **Why 0.17.0-dev?** The engine uses the new `std.Io` API introduced in Zig 0.17.
 > This version is **not** available via `winget` / `apt` / `brew` yet.

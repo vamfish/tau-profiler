@@ -384,7 +384,7 @@ fn getLogicalCoresLinux() u32 {
 }
 
 fn bindToCoreLinux(core: u32) bool {
-    comptime if (builtin.os.tag == .linux) {
+    if (builtin.os.tag == .linux) {
         const mask = @as(usize, 1) << @as(u6, @intCast(core));
         const SYS = std.os.linux.SYS;
         const rc = std.os.linux.syscall3(SYS.sched_setaffinity, @as(usize, 0), @as(usize, @sizeOf(usize)), @intFromPtr(&mask));
@@ -392,7 +392,7 @@ fn bindToCoreLinux(core: u32) bool {
         var result_mask: usize = 0;
         _ = std.os.linux.syscall3(SYS.sched_getaffinity, 0, @sizeOf(usize), @intFromPtr(&result_mask));
         return result_mask == mask;
-    };
+    }
     return false;
 }
 
@@ -420,7 +420,7 @@ fn getCpuBrandAarch64(buffer: []u8) []u8 {
 }
 
 fn getCpuBrandMacos(buffer: []u8) []u8 {
-    comptime if (builtin.os.tag == .macos) {
+    if (builtin.os.tag == .macos) {
         @memset(buffer, 0);
         // Try sysctl first for specific model (e.g. "Apple M1 Pro")
         var size: usize = buffer.len;
@@ -447,7 +447,7 @@ fn getCpuBrandMacos(buffer: []u8) []u8 {
         const label = "Apple Silicon";
         @memcpy(buffer[0..label.len], label);
         return buffer[0..label.len];
-    };
+    }
     return "Apple Silicon";
 }
 
@@ -524,7 +524,7 @@ fn getVirtualizationAarch64() VmInfo {
 // ═══════════════════════════════════════════════════════════════
 
 fn getCoresSysctl(sysctl_name: []const u8) u32 {
-    comptime if (builtin.os.tag == .macos) {
+    if (builtin.os.tag == .macos) {
         var count: u32 = 0;
         var size: usize = @sizeOf(u32);
         var name_buf: [32]u8 = undefined;
@@ -539,7 +539,7 @@ fn getCoresSysctl(sysctl_name: []const u8) u32 {
             0,
         );
         if (rc == 0) return count;
-    };
+    }
     return 0;
 }
 
@@ -629,7 +629,7 @@ fn bindToCoreWindows(core: u32) bool {
 
 /// Read a sysfs file via raw Linux syscall. Returns number of bytes read.
 pub fn readSysFile(path: []const u8, buffer: []u8) usize {
-    comptime if (builtin.os.tag == .linux) {
+    if (builtin.os.tag == .linux) {
         const SYS = std.os.linux.SYS;
         var zpath: [256]u8 = undefined;
         const n = @min(path.len, zpath.len - 1);
@@ -644,12 +644,12 @@ pub fn readSysFile(path: []const u8, buffer: []u8) usize {
 
         if (bytes_read >> 63 != 0) return 0;
         return @as(usize, @intCast(bytes_read));
-    };
+    }
     return 0;
 }
 
 fn countCoresFromSysfs(comptime package_file: []const u8, comptime core_file: []const u8) u32 {
-    comptime if (builtin.os.tag == .linux) {
+    if (builtin.os.tag == .linux) {
         _ = package_file;
         var buf: [128]u8 = undefined;
         var seen: u64 = 0;
@@ -666,7 +666,7 @@ fn countCoresFromSysfs(comptime package_file: []const u8, comptime core_file: []
             if (id < 64) seen |= @as(u64, 1) << @intCast(id);
         }
         return @intCast(@popCount(seen));
-    };
+    }
     return 0;
 }
 
